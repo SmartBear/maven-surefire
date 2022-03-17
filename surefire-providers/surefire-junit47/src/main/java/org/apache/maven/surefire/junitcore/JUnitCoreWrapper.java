@@ -60,7 +60,7 @@ final class JUnitCoreWrapper
     private final RunOrderCalculator runOrderCalculator;
 
     JUnitCoreWrapper( Notifier notifier, JUnitCoreParameters jUnitCoreParameters, ConsoleLogger consoleStream,
-                      RunOrderCalculator runOrderCalculator)
+                      RunOrderCalculator runOrderCalculator )
     {
         this.notifier = notifier;
         this.jUnitCoreParameters = jUnitCoreParameters;
