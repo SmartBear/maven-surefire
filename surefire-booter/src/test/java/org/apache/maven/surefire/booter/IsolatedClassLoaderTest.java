@@ -19,8 +19,8 @@ package org.apache.maven.surefire.booter;
  * under the License.
  */
 
-import org.apache.maven.shared.utils.io.FileUtils;
 import org.apache.maven.surefire.api.provider.AbstractProvider;
+import org.apache.maven.surefire.shared.utils.io.FileUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -50,7 +50,7 @@ public class IsolatedClassLoaderTest
 
         for ( String file : files )
         {
-            URL fileUrl = new File( file ).toURL();
+            URL fileUrl = new File( file ).toURI().toURL();
             classLoader.addURL( fileUrl );
         }
     }

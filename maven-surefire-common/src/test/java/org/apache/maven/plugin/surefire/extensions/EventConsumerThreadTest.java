@@ -38,7 +38,7 @@ import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static java.util.Arrays.copyOfRange;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  *
@@ -77,6 +77,7 @@ public class EventConsumerThreadTest
         event.put( ":std-out-stream:".getBytes( UTF_8 ) );
         event.put( (byte) 10 );
         event.put( ":normal-run:".getBytes( UTF_8 ) );
+        event.put( "\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001:".getBytes( UTF_8 ) );
         event.put( (byte) 5 );
         event.put( ":UTF-8:".getBytes( UTF_8 ) );
         event.putInt( 100 );
@@ -227,6 +228,13 @@ public class EventConsumerThreadTest
         public ConsoleLogger getConsoleLogger()
         {
             return null;
+        }
+
+        @Nonnull
+        @Override
+        public Object getConsoleLock()
+        {
+            return new Object();
         }
 
         @Override

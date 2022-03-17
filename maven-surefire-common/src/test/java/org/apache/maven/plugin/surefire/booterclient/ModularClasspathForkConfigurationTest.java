@@ -19,7 +19,7 @@ package org.apache.maven.plugin.surefire.booterclient;
  * under the License.
  */
 
-import org.apache.maven.plugin.surefire.booterclient.lazytestprovider.OutputStreamFlushableCommandline;
+import org.apache.maven.plugin.surefire.booterclient.lazytestprovider.Commandline;
 import org.apache.maven.plugin.surefire.log.api.NullConsoleLogger;
 import org.apache.maven.surefire.booter.ClassLoaderConfiguration;
 import org.apache.maven.surefire.booter.Classpath;
@@ -46,7 +46,7 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.singleton;
 import static org.apache.maven.surefire.booter.Classpath.emptyClasspath;
 import static org.apache.maven.surefire.shared.utils.StringUtils.replace;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 /**
@@ -116,7 +116,7 @@ public class ModularClasspathForkConfigurationTest
                 .isEqualTo( "abc=\"" + replace( patchFile.getPath(), "\\", "\\\\" ) + "\"" );
 
         assertThat( argsFileLines.get( 6 ) )
-                .isEqualTo( "--add-exports" );
+                .isEqualTo( "--add-opens" );
 
         assertThat( argsFileLines.get( 7 ) )
                 .isEqualTo( "abc/org.apache.abc=ALL-UNNAMED" );
@@ -145,7 +145,7 @@ public class ModularClasspathForkConfigurationTest
         ClassLoaderConfiguration clc = new ClassLoaderConfiguration( true, true );
         StartupConfiguration startupConfiguration = new StartupConfiguration( "JUnitCoreProvider",
             modularClasspathConfiguration, clc, null, Collections.<String[]>emptyList() );
-        OutputStreamFlushableCommandline cli = new OutputStreamFlushableCommandline();
+        Commandline cli = new Commandline();
         config.resolveClasspath( cli, ForkedBooter.class.getName(), startupConfiguration,
                 createTempFile( "surefire", "surefire-reports" ) );
 

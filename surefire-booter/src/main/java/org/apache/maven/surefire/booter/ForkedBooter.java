@@ -31,8 +31,6 @@ import org.apache.maven.surefire.api.fork.ForkNodeArguments;
 import org.apache.maven.surefire.api.provider.CommandListener;
 import org.apache.maven.surefire.api.provider.ProviderParameters;
 import org.apache.maven.surefire.api.provider.SurefireProvider;
-import org.apache.maven.surefire.api.report.LegacyPojoStackTraceWriter;
-import org.apache.maven.surefire.api.report.StackTraceWriter;
 import org.apache.maven.surefire.api.testset.TestSetFailedException;
 import org.apache.maven.surefire.booter.spi.LegacyMasterProcessChannelProcessorFactory;
 import org.apache.maven.surefire.booter.spi.SurefireMasterProcessChannelProcessorFactory;
@@ -57,10 +55,8 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import static java.lang.Math.max;
 import static java.lang.Thread.currentThread;
 import static java.util.ServiceLoader.load;
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.maven.surefire.api.cli.CommandLineOption.LOGGING_LEVEL_DEBUG;
 import static org.apache.maven.surefire.api.util.ReflectionUtils.instantiateOneArg;
@@ -85,13 +81,16 @@ public final class ForkedBooter
 {
     private static final long DEFAULT_SYSTEM_EXIT_TIMEOUT_IN_SECONDS = 30L;
     private static final long PING_TIMEOUT_IN_SECONDS = 30L;
-    private static final long ONE_SECOND_IN_MILLIS = 1_000L;
     private static final String LAST_DITCH_SHUTDOWN_THREAD = "surefire-forkedjvm-last-ditch-daemon-shutdown-thread-";
     private static final String PING_THREAD = "surefire-forkedjvm-ping-";
+    private static final String PROCESS_CHECKER_THREAD = "surefire-process-checker";
+    private static final String PROCESS_PIPES_ERROR =
+        "The channel (std/out or TCP/IP) failed to send a stream from this subprocess.";
 
     private final Semaphore exitBarrier = new Semaphore( 0 );
 
     private volatile MasterProcessChannelEncoder eventChannel;
+    private volatile ConsoleLogger logger;
     private volatile MasterProcessChannelProcessorFactory channelProcessorFactory;
     private volatile CommandReader commandReader;
     private volatile long systemExitTimeoutInSeconds = DEFAULT_SYSTEM_EXIT_TIMEOUT_IN_SECONDS;
@@ -138,10 +137,10 @@ public final class ForkedBooter
         flushEventChannelOnExit();
 
         forkingReporterFactory = createForkingReporterFactory();
-        ConsoleLogger logger = (ConsoleLogger) forkingReporterFactory.createReporter();
+        logger = forkingReporterFactory.createTestReportListener();
         commandReader = new CommandReader( decoder, providerConfiguration.getShutdown(), logger );
 
-        pingScheduler = isDebugging ? null : listenToShutdownCommands( booterDeserializer.getPluginPid(), logger );
+        pingScheduler = isDebugging ? null : listenToShutdownCommands( booterDeserializer.getPluginPid() );
 
         systemExitTimeoutInSeconds = providerConfiguration.systemExitTimeout( DEFAULT_SYSTEM_EXIT_TIMEOUT_IN_SECONDS );
 
@@ -169,16 +168,12 @@ public final class ForkedBooter
         {
             runSuitesInProcess();
         }
-        catch ( InvocationTargetException e )
-        {
-            Throwable t = e.getTargetException();
-            DumpErrorSingleton.getSingleton().dumpException( t );
-            eventChannel.consoleErrorLog( new LegacyPojoStackTraceWriter( "test subsystem", "no method", t ), false );
-        }
         catch ( Throwable t )
         {
-            DumpErrorSingleton.getSingleton().dumpException( t );
-            eventChannel.consoleErrorLog( new LegacyPojoStackTraceWriter( "test subsystem", "no method", t ), false );
+            Throwable e =
+                t instanceof InvocationTargetException ? ( (InvocationTargetException) t ).getTargetException() : t;
+            DumpErrorSingleton.getSingleton().dumpException( e );
+            logger.error( e.getLocalizedMessage(), e );
         }
         finally
         {
@@ -187,10 +182,11 @@ public final class ForkedBooter
 
             if ( eventChannel.checkError() )
             {
-                DumpErrorSingleton.getSingleton()
-                    .dumpText( "The channel (std/out or TCP/IP) failed to send a stream from this subprocess." );
+                DumpErrorSingleton.getSingleton().dumpText( PROCESS_PIPES_ERROR );
+                logger.error( PROCESS_PIPES_ERROR );
             }
 
+            // process pipes are closed far here
             acknowledgedExit();
         }
     }
@@ -247,26 +243,37 @@ public final class ForkedBooter
         }
     }
 
-    private PingScheduler listenToShutdownCommands( String ppid, ConsoleLogger logger )
+    private PingScheduler listenToShutdownCommands( String ppid )
     {
         PpidChecker ppidChecker = ppid == null ? null : new PpidChecker( ppid );
         commandReader.addShutdownListener( createExitHandler( ppidChecker ) );
         AtomicBoolean pingDone = new AtomicBoolean( true );
         commandReader.addNoopListener( createPingHandler( pingDone ) );
-        PingScheduler pingMechanisms = new PingScheduler( createPingScheduler(), ppidChecker );
+        PingScheduler pingMechanisms = new PingScheduler(
+            createScheduler( PING_THREAD + PING_TIMEOUT_IN_SECONDS + "s" ),
+            createScheduler( PROCESS_CHECKER_THREAD ),
+            ppidChecker );
 
         ProcessCheckerType checkerType = startupConfiguration.getProcessChecker();
 
-        if ( ( checkerType == ALL || checkerType == NATIVE ) && pingMechanisms.pluginProcessChecker != null )
+        if ( ( checkerType == ALL || checkerType == NATIVE ) && pingMechanisms.processChecker != null )
         {
-            logger.debug( pingMechanisms.pluginProcessChecker.toString() );
-            Runnable checkerJob = processCheckerJob( pingMechanisms );
-            pingMechanisms.pingScheduler.scheduleWithFixedDelay( checkerJob, 0L, 1L, SECONDS );
+            logger.debug( pingMechanisms.processChecker.toString() );
+            if ( pingMechanisms.processChecker.canUse() )
+            {
+                Runnable checkerJob = processCheckerJob( pingMechanisms );
+                pingMechanisms.processCheckerScheduler.scheduleWithFixedDelay( checkerJob, 0L, 1L, SECONDS );
+            }
+            else if ( !pingMechanisms.processChecker.isStopped() )
+            {
+                logger.warning( "Cannot use process checker with configuration " + checkerType
+                    + ". Platform not supported." );
+            }
         }
 
         if ( checkerType == ALL || checkerType == PING )
         {
-            Runnable pingJob = createPingJob( pingDone, pingMechanisms.pluginProcessChecker );
+            Runnable pingJob = createPingJob( pingDone, pingMechanisms.processChecker );
             pingMechanisms.pingScheduler.scheduleWithFixedDelay( pingJob, 0L, PING_TIMEOUT_IN_SECONDS, SECONDS );
         }
 
@@ -282,10 +289,11 @@ public final class ForkedBooter
             {
                 try
                 {
-                    if ( pingMechanism.pluginProcessChecker.canUse()
-                                 && !pingMechanism.pluginProcessChecker.isProcessAlive()
+                    if ( pingMechanism.processChecker.canUse()
+                                 && !pingMechanism.processChecker.isProcessAlive()
                                  && !pingMechanism.pingScheduler.isShutdown() )
                     {
+                        logger.error( "Surefire is going to kill self fork JVM. Maven process died." );
                         DumpErrorSingleton.getSingleton()
                                 .dumpText( "Killing self fork JVM. Maven process died."
                                         + NL
@@ -327,19 +335,31 @@ public final class ForkedBooter
                 Shutdown shutdown = command.toShutdownData();
                 if ( shutdown.isKill() )
                 {
-                    ppidChecker.stop();
+                    if ( ppidChecker != null )
+                    {
+                        ppidChecker.stop();
+                    }
+
+                    logger.error( "Surefire is going to kill self fork JVM. "
+                        + "Received SHUTDOWN {" + shutdown + "} command from Maven shutdown hook." );
                     DumpErrorSingleton.getSingleton()
                             .dumpText( "Killing self fork JVM. Received SHUTDOWN command from Maven shutdown hook."
                                     + NL
                                     + "Thread dump before killing the process (" + getProcessName() + "):"
                                     + NL
                                     + generateThreadDump() );
+
                     kill();
                 }
                 else if ( shutdown.isExit() )
                 {
-                    ppidChecker.stop();
+                    if ( ppidChecker != null )
+                    {
+                        ppidChecker.stop();
+                    }
                     cancelPingScheduler();
+                    logger.error( "Surefire is going to exit self fork JVM. "
+                        + "Received SHUTDOWN {" + shutdown + "} command from Maven shutdown hook." );
                     DumpErrorSingleton.getSingleton()
                             .dumpText( "Exiting self fork JVM. Received SHUTDOWN command from Maven shutdown hook."
                                     + NL
@@ -373,6 +393,7 @@ public final class ForkedBooter
                     boolean hasPing = pingDone.getAndSet( false );
                     if ( !hasPing )
                     {
+                        logger.error( "Killing self fork JVM. PING timeout elapsed." );
                         DumpErrorSingleton.getSingleton()
                                 .dumpText( "Killing self fork JVM. PING timeout elapsed."
                                         + NL
@@ -418,9 +439,8 @@ public final class ForkedBooter
         );
         eventChannel.bye();
         launchLastDitchDaemonShutdownThread( 0 );
-        long timeoutMillis = max( systemExitTimeoutInSeconds * ONE_SECOND_IN_MILLIS, ONE_SECOND_IN_MILLIS );
-        boolean timeoutElapsed = !acquireOnePermit( exitBarrier, timeoutMillis );
-        if ( timeoutElapsed && !eventChannel.checkError() )
+        boolean byeAckReceived = acquireOnePermit( exitBarrier );
+        if ( !byeAckReceived && !eventChannel.checkError() )
         {
             eventChannel.sendExitError( null, false );
         }
@@ -433,7 +453,7 @@ public final class ForkedBooter
     private void runSuitesInProcess()
         throws TestSetFailedException, InvocationTargetException
     {
-        createProviderInCurrentClassloader( forkingReporterFactory ).invoke( testSet );
+        createProviderInCurrentClassloader().invoke( testSet );
     }
 
     private ForkingReporterFactory createForkingReporterFactory()
@@ -463,6 +483,12 @@ public final class ForkedBooter
                     @Override
                     public void run()
                     {
+                        if ( logger != null )
+                        {
+                            logger.error( "Surefire is going to kill self fork JVM. The exit has elapsed "
+                                + systemExitTimeoutInSeconds + " seconds after System.exit(" + returnCode + ")." );
+                        }
+
                         DumpErrorSingleton.getSingleton()
                                 .dumpText( "Thread dump for process ("
                                         + getProcessName()
@@ -478,14 +504,13 @@ public final class ForkedBooter
         );
     }
 
-    private SurefireProvider createProviderInCurrentClassloader( ForkingReporterFactory reporterManagerFactory )
+    private SurefireProvider createProviderInCurrentClassloader()
     {
         BaseProviderFactory bpf = new BaseProviderFactory( true );
-        bpf.setReporterFactory( reporterManagerFactory );
+        bpf.setReporterFactory( forkingReporterFactory );
         bpf.setCommandReader( commandReader );
         bpf.setTestRequest( providerConfiguration.getTestSuiteDefinition() );
         bpf.setReporterConfiguration( providerConfiguration.getReporterConfiguration() );
-        bpf.setForkedChannelEncoder( eventChannel );
         ClassLoader classLoader = currentThread().getContextClassLoader();
         bpf.setClassLoaders( classLoader );
         bpf.setTestArtifactInfo( providerConfiguration.getTestArtifact() );
@@ -572,11 +597,9 @@ public final class ForkedBooter
         catch ( Throwable t )
         {
             DumpErrorSingleton.getSingleton().dumpException( t );
-            t.printStackTrace();
-            if ( booter.eventChannel != null )
+            if ( booter.logger != null )
             {
-                StackTraceWriter stack = new LegacyPojoStackTraceWriter( "test subsystem", "no method", t );
-                booter.eventChannel.consoleErrorLog( stack, false );
+                booter.logger.error( t.getLocalizedMessage(), t );
             }
             booter.cancelPingScheduler();
             booter.exit1();
@@ -588,25 +611,24 @@ public final class ForkedBooter
         return pluginProcessChecker != null && pluginProcessChecker.canUse();
     }
 
-    private static boolean acquireOnePermit( Semaphore barrier, long timeoutMillis )
+    private static boolean acquireOnePermit( Semaphore barrier )
     {
         try
         {
-            return barrier.tryAcquire( timeoutMillis, MILLISECONDS );
+            return barrier.tryAcquire( Integer.MAX_VALUE, SECONDS );
         }
         catch ( InterruptedException e )
         {
             // cancel schedulers, stop the command reader and exit 0
-            return true;
+            return false;
         }
     }
 
-    private static ScheduledExecutorService createPingScheduler()
+    private static ScheduledExecutorService createScheduler( String threadName )
     {
-        ThreadFactory threadFactory = newDaemonThreadFactory( PING_THREAD + PING_TIMEOUT_IN_SECONDS + "s" );
+        ThreadFactory threadFactory = newDaemonThreadFactory( threadName );
         ScheduledThreadPoolExecutor executor = new ScheduledThreadPoolExecutor( 1, threadFactory );
-        executor.setKeepAliveTime( 3L, SECONDS );
-        executor.setMaximumPoolSize( 2 );
+        executor.setMaximumPoolSize( executor.getCorePoolSize() );
         return executor;
     }
 
@@ -632,20 +654,24 @@ public final class ForkedBooter
     private static class PingScheduler
     {
         private final ScheduledExecutorService pingScheduler;
-        private final PpidChecker pluginProcessChecker;
+        private final ScheduledExecutorService processCheckerScheduler;
+        private final PpidChecker processChecker;
 
-        PingScheduler( ScheduledExecutorService pingScheduler, PpidChecker pluginProcessChecker )
+        PingScheduler( ScheduledExecutorService pingScheduler, ScheduledExecutorService processCheckerScheduler,
+                       PpidChecker processChecker )
         {
             this.pingScheduler = pingScheduler;
-            this.pluginProcessChecker = pluginProcessChecker;
+            this.processCheckerScheduler = processCheckerScheduler;
+            this.processChecker = processChecker;
         }
 
         void shutdown()
         {
             pingScheduler.shutdown();
-            if ( pluginProcessChecker != null )
+            processCheckerScheduler.shutdown();
+            if ( processChecker != null )
             {
-                pluginProcessChecker.destroyActiveCommands();
+                processChecker.destroyActiveCommands();
             }
         }
     }
@@ -679,5 +705,4 @@ public final class ForkedBooter
         return ManagementFactory.getRuntimeMXBean()
                 .getName();
     }
-
 }

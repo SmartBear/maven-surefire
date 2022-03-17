@@ -34,10 +34,9 @@ import java.util.Collection;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.powermock.reflect.Whitebox.invokeMethod;
 
 /**
@@ -134,7 +133,7 @@ public class ForkedBooterTest
         ScheduledExecutorService scheduler = null;
         try
         {
-            scheduler = invokeMethod( ForkedBooter.class, "createPingScheduler" );
+            scheduler = invokeMethod( ForkedBooter.class, "createScheduler", "thread name" );
             assertThat( scheduler )
                     .isNotNull();
         }
@@ -151,7 +150,7 @@ public class ForkedBooterTest
     public void testBarrier1() throws Exception
     {
         Semaphore semaphore = new Semaphore( 2 );
-        boolean acquiredOnePermit = invokeMethod( ForkedBooter.class, "acquireOnePermit", semaphore, 30_000L );
+        boolean acquiredOnePermit = invokeMethod( ForkedBooter.class, "acquireOnePermit", semaphore );
 
         assertThat( acquiredOnePermit ).isTrue();
         assertThat( semaphore.availablePermits() ).isEqualTo( 1 );
@@ -164,9 +163,9 @@ public class ForkedBooterTest
         Thread.currentThread().interrupt();
         try
         {
-            boolean acquiredOnePermit = invokeMethod( ForkedBooter.class, "acquireOnePermit", semaphore, 30_000L );
+            boolean acquiredOnePermit = invokeMethod( ForkedBooter.class, "acquireOnePermit", semaphore );
 
-            assertThat( acquiredOnePermit ).isTrue();
+            assertThat( acquiredOnePermit ).isFalse();
             assertThat( semaphore.availablePermits() ).isEqualTo( 0 );
         }
         finally
@@ -178,11 +177,10 @@ public class ForkedBooterTest
     @Test
     public void testScheduler() throws Exception
     {
-        ScheduledThreadPoolExecutor executor = invokeMethod( ForkedBooter.class, "createPingScheduler" );
+        ScheduledThreadPoolExecutor executor = invokeMethod( ForkedBooter.class, "createScheduler", "thread name" );
         executor.shutdown();
         assertThat( executor.getCorePoolSize() ).isEqualTo( 1 );
-        assertThat( executor.getKeepAliveTime( TimeUnit.SECONDS ) ).isEqualTo( 3L );
-        assertThat( executor.getMaximumPoolSize() ).isEqualTo( 2 );
+        assertThat( executor.getMaximumPoolSize() ).isEqualTo( 1 );
     }
 
     @Test

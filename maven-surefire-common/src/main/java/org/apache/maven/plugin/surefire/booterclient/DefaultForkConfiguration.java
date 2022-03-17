@@ -20,7 +20,7 @@ package org.apache.maven.plugin.surefire.booterclient;
  */
 
 import org.apache.maven.plugin.surefire.JdkAttributes;
-import org.apache.maven.plugin.surefire.booterclient.lazytestprovider.OutputStreamFlushableCommandline;
+import org.apache.maven.plugin.surefire.booterclient.lazytestprovider.Commandline;
 import org.apache.maven.plugin.surefire.log.api.ConsoleLogger;
 import org.apache.maven.surefire.booter.AbstractPathConfiguration;
 import org.apache.maven.surefire.booter.Classpath;
@@ -28,6 +28,7 @@ import org.apache.maven.surefire.booter.StartupConfiguration;
 import org.apache.maven.surefire.booter.SurefireBooterForkException;
 import org.apache.maven.surefire.extensions.ForkNodeFactory;
 import org.apache.maven.surefire.api.util.internal.ImmutableMap;
+import org.apache.maven.surefire.shared.utils.cli.CommandLineException;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -100,7 +101,7 @@ public abstract class DefaultForkConfiguration
         this.forkNodeFactory = forkNodeFactory;
     }
 
-    protected abstract void resolveClasspath( @Nonnull OutputStreamFlushableCommandline cli,
+    protected abstract void resolveClasspath( @Nonnull Commandline cli,
                                               @Nonnull String booterThatHasMainMethod,
                                               @Nonnull StartupConfiguration config,
                                               @Nonnull File dumpLogDirectory )
@@ -128,40 +129,47 @@ public abstract class DefaultForkConfiguration
      */
     @Nonnull
     @Override
-    public OutputStreamFlushableCommandline createCommandLine( @Nonnull StartupConfiguration config,
-                                                               int forkNumber,
-                                                               @Nonnull File dumpLogDirectory )
+    public Commandline createCommandLine( @Nonnull StartupConfiguration config,
+                                          int forkNumber,
+                                          @Nonnull File dumpLogDirectory )
             throws SurefireBooterForkException
     {
-        OutputStreamFlushableCommandline cli =
-                new OutputStreamFlushableCommandline( getExcludedEnvironmentVariables() );
-
-        cli.setWorkingDirectory( getWorkingDirectory( forkNumber ).getAbsolutePath() );
-
-        for ( Entry<String, String> entry : getEnvironmentVariables().entrySet() )
+        try
         {
-            String value = entry.getValue();
-            cli.addEnvironment( entry.getKey(), value == null ? "" : value );
+            Commandline cli =
+                    new Commandline( getExcludedEnvironmentVariables() );
+
+            cli.setWorkingDirectory( getWorkingDirectory( forkNumber ).getAbsolutePath() );
+
+            for ( Entry<String, String> entry : getEnvironmentVariables().entrySet() )
+            {
+                String value = entry.getValue();
+                cli.addEnvironment( entry.getKey(), value == null ? "" : value );
+            }
+
+            cli.setExecutable( getJdkForTests().getJvmExecutable().getAbsolutePath() );
+
+            String jvmArgLine = newJvmArgLine( forkNumber );
+            if ( !jvmArgLine.isEmpty() )
+            {
+                cli.createArg()
+                        .setLine( jvmArgLine );
+            }
+
+            if ( getDebugLine() != null && !getDebugLine().isEmpty() )
+            {
+                cli.createArg()
+                        .setLine( getDebugLine() );
+            }
+
+            resolveClasspath( cli, findStartClass( config ), config, dumpLogDirectory );
+
+            return cli;
         }
-
-        cli.setExecutable( getJdkForTests().getJvmExecutable().getAbsolutePath() );
-
-        String jvmArgLine = newJvmArgLine( forkNumber );
-        if ( !jvmArgLine.isEmpty() )
+        catch ( CommandLineException e )
         {
-            cli.createArg()
-                    .setLine( jvmArgLine );
+            throw new SurefireBooterForkException( e.getLocalizedMessage(), e );
         }
-
-        if ( getDebugLine() != null && !getDebugLine().isEmpty() )
-        {
-            cli.createArg()
-                    .setLine( getDebugLine() );
-        }
-
-        resolveClasspath( cli, findStartClass( config ), config, dumpLogDirectory );
-
-        return cli;
     }
 
     protected ConsoleLogger getLogger()

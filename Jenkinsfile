@@ -29,15 +29,14 @@ properties(
         disableConcurrentBuilds()
     ]
 )
-
-final def oses = ['linux':'ubuntu && !H48', 'windows':'Windows']
-final def mavens = env.BRANCH_NAME == 'master' ? ['3.6.x', '3.2.x'] : ['3.6.x']
+final def oses = ['linux':'ubuntu && maven', 'windows':'windows-he']
+final def mavens = env.BRANCH_NAME == 'master' ? ['3.8.x', '3.2.x'] : ['3.8.x']
 // all non-EOL versions and the first EA
-final def jdks = [16, 11, 8, 7]
+final def jdks = [18, 17, 11, 8]
 
 final def options = ['-e', '-V', '-B', '-nsu', '-P', 'run-its']
 final def goals = ['clean', 'install']
-final def goalsDepl = ['clean', 'deploy', 'jacoco:report']
+final def goalsDepl = ['clean', 'deploy']
 final Map stages = [:]
 
 oses.eachWithIndex { osMapping, indexOfOs ->
@@ -45,22 +44,19 @@ oses.eachWithIndex { osMapping, indexOfOs ->
         jdks.eachWithIndex { jdk, indexOfJdk ->
             def os = osMapping.key
             def label = osMapping.value
-            final String jdkTestName = jenkinsEnv.jdkFromVersion(os, jdk.toString())
-            final String jdkName = jenkinsEnv.jdkFromVersion(os, '8')
+            final String jdkName = jenkinsEnv.jdkFromVersion(os, jdk.toString())
             final String mvnName = jenkinsEnv.mvnFromVersion(os, maven)
             final String stageKey = "${os}-jdk${jdk}-maven${maven}"
 
-// Referenses for TLS:
-// https://central.sonatype.org/articles/2018/May/04/discontinued-support-for-tlsv11-and-below/?__hstc=31049440.ab2fd229e7f8b6176196d9f78621e1f5.1534324377408.1534324377408.1534324377408.1&__hssc=31049440.1.1534324377409&__hsfp=2729160845
             def mavenOpts = '-Xms64m -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=warn'
             mavenOpts += (os == 'linux' ? ' -Xmx1g' : ' -Xmx256m')
 
-            if (label == null || jdkTestName == null || mvnName == null) {
+            if (label == null || jdkName == null || mvnName == null) {
                 println "Skipping ${stageKey} as unsupported by Jenkins Environment."
                 return
             }
 
-            println "${stageKey}  ==>  Label: ${label}, JDK: ${jdkTestName}, Maven: ${mvnName}."
+            println "${stageKey}  ==>  Label: ${label}, JDK: ${jdkName}, Maven: ${mvnName}."
 
             stages[stageKey] = {
                 node(label) {
@@ -68,14 +64,14 @@ oses.eachWithIndex { osMapping, indexOfOs ->
                         boolean first = indexOfOs == 0 && indexOfMaven == 0 && indexOfJdk == 0
                         def failsafeItPort = 8000 + 100 * indexOfMaven + 10 * indexOfJdk
                         def allOptions = options + ['-Djava.awt.headless=true', "-Dfailsafe-integration-test-port=${failsafeItPort}", "-Dfailsafe-integration-test-stop-port=${1 + failsafeItPort}"]
-                        if (jdk == 7) {
-                            allOptions += '-Dhttps.protocols=TLSv1.2'
-                        }
+
                         if (!maven.startsWith('3.2') && !maven.startsWith('3.3') && !maven.startsWith('3.5')) {
                             allOptions += '--no-transfer-progress'
                         }
                         ws(dir: "${os == 'windows' ? "${TEMP}\\${BUILD_TAG}" : pwd()}") {
-                            buildProcess(stageKey, jdkName, jdkTestName, mvnName, first ? goalsDepl : goals, allOptions, mavenOpts, first)
+                            buildProcess(stageKey, jdkName, mvnName,
+                                first  && env.BRANCH_NAME == 'master' ? goalsDepl : goals,
+                                allOptions, mavenOpts, first)
                         }
                     }
                 }
@@ -115,12 +111,15 @@ timeout(time: 12, unit: 'HOURS') {
         currentBuild.result = 'FAILURE'
         throw e
     } finally {
-        jenkinsNotify()
+        if (env.BRANCH_NAME == 'master') {
+            jenkinsNotify()            
+        }    
     }
 }
 
-def buildProcess(String stageKey, String jdkName, String jdkTestName, String mvnName, goals, options, mavenOpts, boolean makeReports) {
+def buildProcess(String stageKey, String jdkName, String mvnName, goals, options, mavenOpts, boolean makeReports) {
     cleanWs()
+    def errorStatus = -99
     try {
         def mvnLocalRepoDir
         if (isUnix()) {
@@ -134,49 +133,50 @@ def buildProcess(String stageKey, String jdkName, String jdkTestName, String mvn
         println "Maven Local Repository = ${mvnLocalRepoDir}."
         assert mvnLocalRepoDir != null : 'Local Maven Repository is undefined.'
 
-        stage("checkout ${stageKey}") {
-            checkout scm
-        }
-
         def properties = ["-Djacoco.skip=${!makeReports}", "\"-Dmaven.repo.local=${mvnLocalRepoDir}\""]
-        println "Setting JDK for testing ${jdkTestName}"
         def cmd = ['mvn'] + goals + options + properties
 
         stage("build ${stageKey}") {
+
+             println "NODE_NAME = ${env.NODE_NAME}"
+
+             checkout scm
+
             if (isUnix()) {
                 withEnv(["JAVA_HOME=${tool(jdkName)}",
-                         "JAVA_HOME_IT=${tool(jdkTestName)}",
                          "MAVEN_OPTS=${mavenOpts}",
                          "PATH+MAVEN=${tool(mvnName)}/bin:${tool(jdkName)}/bin"
                 ]) {
-                    sh '$JAVA_HOME_IT/bin/java -version'
-                    sh 'echo JAVA_HOME=$JAVA_HOME, JAVA_HOME_IT=$JAVA_HOME_IT, PATH=$PATH'
-                    def script = cmd + ['\"-DjdkHome=$JAVA_HOME_IT\"']
-                    def error = sh(returnStatus: true, script: script.join(' '))
-                    currentBuild.result = error == 0 ? 'SUCCESS' : 'FAILURE'
+                    sh 'echo JAVA_HOME=$JAVA_HOME, PATH=$PATH'
+                    sh '$JAVA_HOME/bin/java -version'
+                    errorStatus = sh(returnStatus: true, script: cmd.join(' '))
                 }
             } else {
                 withEnv(["JAVA_HOME=${tool(jdkName)}",
-                         "JAVA_HOME_IT=${tool(jdkTestName)}",
                          "MAVEN_OPTS=${mavenOpts}",
                          "PATH+MAVEN=${tool(mvnName)}\\bin;${tool(jdkName)}\\bin"
                 ]) {
-                    bat '%JAVA_HOME_IT%\\bin\\java -version'
-                    bat 'echo JAVA_HOME=%JAVA_HOME%, JAVA_HOME_IT=%JAVA_HOME_IT%, PATH=%PATH%'
-                    def script = cmd + ['\"-DjdkHome=%JAVA_HOME_IT%\"']
-                    def error = bat(returnStatus: true, script: script.join(' '))
-                    currentBuild.result = error == 0 ? 'SUCCESS' : 'FAILURE'
+                    bat 'echo JAVA_HOME=%JAVA_HOME%, PATH=%PATH%'
+                    bat '%JAVA_HOME%\\bin\\java -version'
+                    errorStatus = bat(returnStatus: true, script: cmd.join(' '))
                 }
             }
+
+            if ( errorStatus != 0 )
+            {
+                currentBuild.result = 'FAILURE'
+                unstable(" executing command status= " + errorStatus)
+            }
         }
+
+    } catch (Throwable e) {
+        println "Throwable: ${e}"
+        throw e
     } finally {
         try {
             if (makeReports) {
-                openTasks(ignoreCase: true, canComputeNew: true, defaultEncoding: 'UTF-8', pattern: sourcesPatternCsv(),
-                        high: tasksViolationHigh(), normal: tasksViolationNormal(), low: tasksViolationLow())
-
                 jacoco(changeBuildStatus: false,
-                        execPattern: '**/*.exec',
+                        execPattern: '**/target/jacoco*.exec',
                         sourcePattern: sourcesPatternCsv(),
                         classPattern: classPatternCsv())
 
@@ -190,15 +190,10 @@ def buildProcess(String stageKey, String jdkName, String jdkTestName, String mvn
                 }
             }
 
-            if (currentBuild.result != null && currentBuild.result != 'SUCCESS') {
-                if (fileExists('maven-failsafe-plugin/target/it')) {
-                    zip(zipFile: "maven-failsafe-plugin--${stageKey}.zip", dir: 'maven-failsafe-plugin/target/it', archive: true)
-                }
-
-                if (fileExists('surefire-its/target')) {
-                    zip(zipFile: "surefire-its--${stageKey}.zip", dir: 'surefire-its/target', archive: true)
-                }
-
+            if (errorStatus != 0) {
+                println "errorStatus=${errorStatus} we are going to archive.."
+                zip(zipFile: "maven-failsafe-plugin--${stageKey}.zip", dir: 'maven-failsafe-plugin/target/it', archive: true)
+                zip(zipFile: "surefire-its--${stageKey}.zip", dir: 'surefire-its/target', archive: true)
                 archiveArtifacts(artifacts: "*--${stageKey}.zip", allowEmptyArchive: true, onlyIfSuccessful: false)
             }
         } finally {
@@ -240,22 +235,6 @@ static def classPatternCsv() {
             '**/surefire-logger-api/target/classes,' +
             '**/surefire-providers/**/target/classes,' +
             '**/surefire-report-parser/target/classes'
-}
-
-@NonCPS
-static def tasksViolationLow() {
-    return '@SuppressWarnings'
-}
-
-@NonCPS
-static def tasksViolationNormal() {
-    return 'TODO,FIXME,@deprecated'
-}
-
-@NonCPS
-static def tasksViolationHigh() {
-    return 'finalize(),Locale.setDefault,TimeZone.setDefault,\
-System.out,System.err,System.setOut,System.setErr,System.setIn,System.exit,System.gc,System.runFinalization,System.load'
 }
 
 @NonCPS

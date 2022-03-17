@@ -25,11 +25,13 @@ import static java.util.Optional.empty;
 import static java.util.Optional.of;
 import static java.util.logging.Level.WARNING;
 import static java.util.stream.Collectors.toList;
-import static org.apache.maven.surefire.api.booter.ProviderParameterNames.TESTNG_GROUPS_PROP;
-import static org.apache.maven.surefire.api.booter.ProviderParameterNames.TESTNG_EXCLUDEDGROUPS_PROP;
-import static org.apache.maven.surefire.api.booter.ProviderParameterNames.INCLUDE_JUNIT5_ENGINES_PROP;
 import static org.apache.maven.surefire.api.booter.ProviderParameterNames.EXCLUDE_JUNIT5_ENGINES_PROP;
+import static org.apache.maven.surefire.api.booter.ProviderParameterNames.INCLUDE_JUNIT5_ENGINES_PROP;
+import static org.apache.maven.surefire.api.booter.ProviderParameterNames.TESTNG_EXCLUDEDGROUPS_PROP;
+import static org.apache.maven.surefire.api.booter.ProviderParameterNames.TESTNG_GROUPS_PROP;
 import static org.apache.maven.surefire.api.report.ConsoleOutputCapture.startCapture;
+import static org.apache.maven.surefire.api.report.RunMode.NORMAL_RUN;
+import static org.apache.maven.surefire.api.report.RunMode.RERUN_TEST_AFTER_FAILURE;
 import static org.apache.maven.surefire.api.util.TestsToRun.fromClass;
 import static org.apache.maven.surefire.shared.utils.StringUtils.isBlank;
 import static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;
@@ -50,14 +52,13 @@ import java.util.logging.Logger;
 
 import org.apache.maven.surefire.api.provider.AbstractProvider;
 import org.apache.maven.surefire.api.provider.ProviderParameters;
-import org.apache.maven.surefire.api.report.ConsoleOutputReceiver;
 import org.apache.maven.surefire.api.report.ReporterException;
 import org.apache.maven.surefire.api.report.ReporterFactory;
-import org.apache.maven.surefire.api.report.RunListener;
 import org.apache.maven.surefire.api.suite.RunResult;
 import org.apache.maven.surefire.api.testset.TestListResolver;
 import org.apache.maven.surefire.api.testset.TestSetFailedException;
 import org.apache.maven.surefire.api.util.ScanResult;
+import org.apache.maven.surefire.api.util.SurefireReflectionException;
 import org.apache.maven.surefire.api.util.TestsToRun;
 import org.apache.maven.surefire.shared.utils.StringUtils;
 import org.junit.platform.engine.DiscoverySelector;
@@ -98,13 +99,19 @@ public class JUnitPlatformProvider
         this.launcher = launcher;
         filters = newFilters();
         configurationParameters = newConfigurationParameters();
-        Logger.getLogger( "org.junit" ).setLevel( WARNING );
     }
 
     @Override
     public Iterable<Class<?>> getSuites()
     {
-        return scanClasspath();
+        try
+        { 
+            return scanClasspath();
+        }
+        finally
+        {
+            closeLauncher();
+        }
     }
 
     @Override
@@ -115,19 +122,21 @@ public class JUnitPlatformProvider
         final RunResult runResult;
         try
         {
-            RunListener runListener = reporterFactory.createReporter();
-            startCapture( ( ConsoleOutputReceiver ) runListener );
+            RunListenerAdapter adapter = new RunListenerAdapter( reporterFactory.createTestReportListener() );
+            adapter.setRunMode( NORMAL_RUN );
+            startCapture( adapter );
+            setupJunitLogger();
             if ( forkTestSet instanceof TestsToRun )
             {
-                invokeAllTests( (TestsToRun) forkTestSet, runListener );
+                invokeAllTests( (TestsToRun) forkTestSet, adapter );
             }
             else if ( forkTestSet instanceof Class )
             {
-                invokeAllTests( fromClass( ( Class<?> ) forkTestSet ), runListener );
+                invokeAllTests( fromClass( ( Class<?> ) forkTestSet ), adapter );
             }
             else if ( forkTestSet == null )
             {
-                invokeAllTests( scanClasspath(), runListener );
+                invokeAllTests( scanClasspath(), adapter );
             }
             else
             {
@@ -142,6 +151,15 @@ public class JUnitPlatformProvider
         return runResult;
     }
 
+    private static void setupJunitLogger()
+    {
+        Logger logger = Logger.getLogger( "org.junit" );
+        if ( logger.getLevel() == null )
+        {
+            logger.setLevel( WARNING );
+        }
+    }
+
     private TestsToRun scanClasspath()
     {
         TestPlanScannerFilter filter = new TestPlanScannerFilter( launcher, filters );
@@ -150,25 +168,40 @@ public class JUnitPlatformProvider
         return parameters.getRunOrderCalculator().orderTestClasses( scannedClasses );
     }
 
-    private void invokeAllTests( TestsToRun testsToRun, RunListener runListener )
+    private void invokeAllTests( TestsToRun testsToRun, RunListenerAdapter adapter )
     {
-        RunListenerAdapter adapter = new RunListenerAdapter( runListener );
-        execute( testsToRun, adapter );
+        try
+        {
+            execute( testsToRun, adapter );
+        }
+        finally
+        {
+            closeLauncher();
+        }
         // Rerun failing tests if requested
         int count = parameters.getTestRequest().getRerunFailingTestsCount();
         if ( count > 0 && adapter.hasFailingTests() )
         {
+            adapter.setRunMode( RERUN_TEST_AFTER_FAILURE );
             for ( int i = 0; i < count; i++ )
             {
-                // Replace the "discoveryRequest" so that it only specifies the failing tests
-                LauncherDiscoveryRequest discoveryRequest = buildLauncherDiscoveryRequestForRerunFailures( adapter );
-                // Reset adapter's recorded failures and invoke the failed tests again
-                adapter.reset();
-                launcher.execute( discoveryRequest, adapter );
-                // If no tests fail in the rerun, we're done
-                if ( !adapter.hasFailingTests() )
+                try
                 {
-                    break;
+                    // Replace the "discoveryRequest" so that it only specifies the failing tests
+                    LauncherDiscoveryRequest discoveryRequest =
+                            buildLauncherDiscoveryRequestForRerunFailures( adapter );
+                    // Reset adapter's recorded failures and invoke the failed tests again
+                    adapter.reset();
+                    launcher.execute( discoveryRequest, adapter );
+                    // If no tests fail in the rerun, we're done
+                    if ( !adapter.hasFailingTests() )
+                    {
+                        break;
+                    }
+                }
+                finally
+                {
+                    closeLauncher();
                 }
             }
         }
@@ -200,6 +233,21 @@ public class JUnitPlatformProvider
                         .selectors( selectClass( c.getName() ) );
                     launcher.execute( builder.build(), adapter );
                 } );
+        }
+    }
+    
+    private void closeLauncher()
+    {
+        if ( launcher instanceof AutoCloseable )
+        {
+            try
+            {
+                ( (AutoCloseable) launcher ).close();
+            }
+            catch ( Exception e )
+            {
+                throw new SurefireReflectionException( e );
+            }
         }
     }
 

@@ -19,11 +19,8 @@ package org.apache.maven.plugin.surefire.booterclient.output;
  * under the License.
  */
 
-import org.apache.maven.surefire.api.event.Event;
-import org.apache.maven.surefire.extensions.EventHandler;
-import org.apache.maven.surefire.shared.utils.cli.StreamConsumer;
-
 import javax.annotation.Nonnull;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -31,6 +28,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 
+import org.apache.maven.surefire.api.event.Event;
+import org.apache.maven.surefire.extensions.EventHandler;
+
+import static java.lang.Thread.currentThread;
 import static org.apache.maven.surefire.api.util.internal.DaemonThreadFactory.newDaemonThread;
 
 /**
@@ -52,6 +53,7 @@ public final class ThreadedStreamConsumer
     private final QueueSynchronizer<Event> synchronizer = new QueueSynchronizer<>( QUEUE_MAX_ITEMS, END_ITEM );
     private final AtomicBoolean stop = new AtomicBoolean();
     private final AtomicBoolean isAlive = new AtomicBoolean( true );
+    private final Thread consumer;
     private final Pumper pumper;
 
     final class Pumper
@@ -69,7 +71,7 @@ public final class ThreadedStreamConsumer
         /**
          * Calls {@link ForkClient#handleEvent(Event)} which may throw any {@link RuntimeException}.<br>
          * Even if {@link ForkClient} is not fault-tolerant, this method MUST be fault-tolerant and thus the
-         * try-catch block must be inside of the loop which prevents from loosing events from {@link StreamConsumer}.
+         * try-catch block must be inside of the loop which prevents from loosing events from {@link EventHandler}.
          * <br>
          * If {@link org.apache.maven.plugin.surefire.report.ConsoleOutputFileReporter#writeTestOutput} throws
          * {@link java.io.IOException} and then {@code target.consumeLine()} throws any RuntimeException, this method
@@ -118,35 +120,51 @@ public final class ThreadedStreamConsumer
     public ThreadedStreamConsumer( EventHandler<Event> target )
     {
         pumper = new Pumper( target );
-        Thread thread = newDaemonThread( pumper, "ThreadedStreamConsumer" );
-        thread.start();
+        Thread consumer = newDaemonThread( pumper, "ThreadedStreamConsumer" );
+        consumer.setUncaughtExceptionHandler( ( t, e ) -> isAlive.set( false ) );
+        consumer.start();
+        this.consumer = consumer;
     }
 
     @Override
     public void handleEvent( @Nonnull Event event )
     {
-        if ( stop.get() )
-        {
-            return;
-        }
         // Do NOT call Thread.isAlive() - slow.
         // It makes worse performance from 790 millis to 1250 millis for 5 million messages.
-        else if ( !isAlive.get() )
+        if ( !stop.get() && isAlive.get() )
         {
-            synchronizer.clearQueue();
-            return;
+            synchronizer.pushNext( event );
         }
-
-        synchronizer.pushNext( event );
     }
 
     @Override
     public void close()
         throws IOException
     {
-        if ( stop.compareAndSet( false, true ) )
+        isAlive.compareAndSet( true, consumer.isAlive() );
+        if ( stop.compareAndSet( false, true ) && isAlive.get() )
         {
-            synchronizer.markStopped();
+            if ( currentThread().isInterrupted() )
+            {
+                synchronizer.markStopped();
+                consumer.interrupt();
+            }
+            else
+            {
+                synchronizer.markStopped();
+
+                try
+                {
+                    consumer.join();
+                }
+                catch ( InterruptedException e )
+                {
+                    // we should not set interrupted=true in this Thread
+                    // if consumer's Thread was interrupted which is indicated by InterruptedException
+                }
+
+                synchronizer.clearQueue();
+            }
         }
 
         if ( pumper.hasErrors() )

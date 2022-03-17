@@ -25,20 +25,22 @@ import org.apache.maven.plugin.surefire.booterclient.output.ForkClient;
 import org.apache.maven.plugin.surefire.extensions.EventConsumerThread;
 import org.apache.maven.plugin.surefire.log.api.ConsoleLogger;
 import org.apache.maven.surefire.api.booter.ForkingRunListener;
+import org.apache.maven.surefire.api.report.TestOutputReportEntry;
 import org.apache.maven.surefire.booter.spi.EventChannelEncoder;
 import org.apache.maven.surefire.api.event.Event;
 import org.apache.maven.surefire.extensions.EventHandler;
 import org.apache.maven.surefire.api.fork.ForkNodeArguments;
 import org.apache.maven.surefire.extensions.util.CountdownCloseable;
 import org.apache.maven.surefire.api.report.CategorizedReportEntry;
-import org.apache.maven.surefire.api.report.ConsoleOutputReceiver;
 import org.apache.maven.surefire.api.report.LegacyPojoStackTraceWriter;
 import org.apache.maven.surefire.api.report.ReportEntry;
 import org.apache.maven.surefire.api.report.ReporterException;
 import org.apache.maven.surefire.api.report.RunListener;
 import org.apache.maven.surefire.api.report.SimpleReportEntry;
 import org.apache.maven.surefire.api.report.StackTraceWriter;
+import org.apache.maven.surefire.api.report.TestOutputReceiver;
 import org.apache.maven.surefire.api.report.TestSetReportEntry;
+import org.apache.maven.surefire.api.report.TestReportListener;
 import org.apache.maven.surefire.api.util.internal.WritableBufferedByteChannel;
 
 import javax.annotation.Nonnull;
@@ -57,10 +59,11 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import static org.apache.maven.surefire.api.report.RunMode.NORMAL_RUN;
+import static org.apache.maven.surefire.api.report.TestOutputReportEntry.stdOut;
 import static org.apache.maven.surefire.api.util.internal.Channels.newBufferedChannel;
 import static org.apache.maven.surefire.api.util.internal.Channels.newChannel;
-import static org.fest.assertions.Assertions.assertThat;
-import static org.fest.assertions.MapAssert.entry;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyZeroInteractions;
 
@@ -173,7 +176,7 @@ public class ForkingRunListenerTest
     public void testConsole() throws Exception
     {
         final StandardTestRun standardTestRun = new StandardTestRun();
-        ConsoleLogger directConsoleReporter = (ConsoleLogger) standardTestRun.run();
+        ConsoleLogger directConsoleReporter = standardTestRun.run();
         directConsoleReporter.info( "HeyYou" );
         standardTestRun.assertExpected( MockReporter.CONSOLE_INFO, "HeyYou" );
     }
@@ -181,8 +184,8 @@ public class ForkingRunListenerTest
     public void testConsoleOutput() throws Exception
     {
         final StandardTestRun standardTestRun = new StandardTestRun();
-        ConsoleOutputReceiver directConsoleReporter = (ConsoleOutputReceiver) standardTestRun.run();
-        directConsoleReporter.writeTestOutput( "HeyYou", false, true );
+        TestOutputReceiver<TestOutputReportEntry> directConsoleReporter = standardTestRun.run();
+        directConsoleReporter.writeTestOutput( new TestOutputReportEntry( stdOut( "HeyYou" ), NORMAL_RUN, 1L )  );
         standardTestRun.assertExpected( MockReporter.STDOUT, "HeyYou" );
     }
 
@@ -197,14 +200,18 @@ public class ForkingRunListenerTest
         TestSetMockReporterFactory providerReporterFactory = new TestSetMockReporterFactory();
         ForkClient forkStreamClient = new ForkClient( providerReporterFactory, new MockNotifiableTestStream(), 1 );
 
-        byte[] cmd = ( ":maven-surefire-event:\u0008:sys-prop:" + (char) 10 + ":normal-run:\u0005:UTF-8:"
-            + "\u0000\u0000\u0000\u0002:k1:\u0000\u0000\u0000\u0002:v1:\n" ).getBytes();
+        byte[] cmd = ( ":maven-surefire-event:\u0008:sys-prop:" + (char) 10 + ":normal-run:"
+            + "\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001:"
+            + "\u0005:UTF-8:"
+            + "\u0000\u0000\u0000\u0002:k1:\u0000\u0000\u0000\u0002:v1:" ).getBytes();
         for ( Event e : streamToEvent( cmd ) )
         {
             forkStreamClient.handleEvent( e );
         }
-        cmd = ( "\n:maven-surefire-event:\u0008:sys-prop:" + (char) 10 + ":normal-run:\u0005:UTF-8:"
-            + "\u0000\u0000\u0000\u0002:k2:\u0000\u0000\u0000\u0002:v2:\n" ).getBytes();
+        cmd = ( "\n:maven-surefire-event:\u0008:sys-prop:" + (char) 10 + ":normal-run:"
+            + "\u0001\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0001:"
+            + "\u0005:UTF-8:"
+            + "\u0000\u0000\u0000\u0002:k2:\u0000\u0000\u0000\u0002:v2:" ).getBytes();
         for ( Event e : streamToEvent( cmd ) )
         {
             forkStreamClient.handleEvent( e );
@@ -214,10 +221,10 @@ public class ForkingRunListenerTest
             .hasSize( 2 );
 
         assertThat( forkStreamClient.getTestVmSystemProperties() )
-            .includes( entry( "k1", "v1" ) );
+            .containsEntry( "k1", "v1" );
 
         assertThat( forkStreamClient.getTestVmSystemProperties() )
-            .includes( entry( "k2", "v2" ) );
+            .containsEntry( "k2", "v2" );
     }
 
     public void testMultipleEntries() throws Exception
@@ -275,9 +282,9 @@ public class ForkingRunListenerTest
         }
 
         MockReporter reporter = (MockReporter) forkStreamClient.getReporter();
-        assertEquals( MockReporter.TEST_STARTING, reporter.getFirstEvent() );
-        assertEquals( expected, reporter.getFirstData() );
-        assertEquals( 1, reporter.getEvents().size() );
+        assertThat( reporter.getFirstEvent() ).isEqualTo( MockReporter.TEST_STARTING );
+        assertThat( reporter.getFirstData() ).isEqualTo( expected );
+        assertThat( reporter.getEvents() ).hasSize( 1 );
 
         forkStreamClient = new ForkClient( providerReporterFactory, notifiableTestStream, 2 );
         for ( Event e : streamToEvent( anotherContent.toByteArray() ) )
@@ -285,9 +292,9 @@ public class ForkingRunListenerTest
             forkStreamClient.handleEvent( e );
         }
         MockReporter reporter2 = (MockReporter) forkStreamClient.getReporter();
-        assertEquals( MockReporter.TEST_SKIPPED, reporter2.getFirstEvent() );
-        assertEquals( secondExpected, reporter2.getFirstData() );
-        assertEquals( 1, reporter2.getEvents().size() );
+        assertThat( reporter2.getFirstEvent() ).isEqualTo( MockReporter.TEST_SKIPPED );
+        assertThat( reporter2.getFirstData() ).isEqualTo( secondExpected );
+        assertThat( reporter2.getEvents() ).hasSize( 1 );
     }
 
     private static List<Event> streamToEvent( byte[] stream ) throws Exception
@@ -371,6 +378,13 @@ public class ForkingRunListenerTest
             return logger;
         }
 
+        @Nonnull
+        @Override
+        public Object getConsoleLock()
+        {
+            return logger;
+        }
+
         boolean isCalled()
         {
             return !dumpStreamText.isEmpty() || !logWarningAtEnd.isEmpty();
@@ -414,7 +428,8 @@ public class ForkingRunListenerTest
 
     private SimpleReportEntry createDefaultReportEntry( Map<String, String> sysProps )
     {
-        return new SimpleReportEntry( "com.abc.TestClass", null, "testMethod", null, null, 22, sysProps );
+        return new SimpleReportEntry( NORMAL_RUN, 1L,
+            "com.abc.TestClass", null, "testMethod", null, null, 22, sysProps );
     }
 
     private SimpleReportEntry createDefaultReportEntry()
@@ -424,7 +439,8 @@ public class ForkingRunListenerTest
 
     private SimpleReportEntry createAnotherDefaultReportEntry()
     {
-        return new SimpleReportEntry( "com.abc.AnotherTestClass", null, "testAnotherMethod", null, 42 );
+        return new SimpleReportEntry( NORMAL_RUN, 0L,
+            "com.abc.AnotherTestClass", null, "testAnotherMethod", null, 42 );
     }
 
     private SimpleReportEntry createReportEntryWithStackTrace()
@@ -437,7 +453,8 @@ public class ForkingRunListenerTest
         {
             StackTraceWriter stackTraceWriter =
                 new LegacyPojoStackTraceWriter( "org.apache.tests.TestClass", "testMethod11", e );
-            return new CategorizedReportEntry( "com.abc.TestClass", "testMethod", "aGroup", stackTraceWriter, 77 );
+            return new CategorizedReportEntry( NORMAL_RUN, 0L,
+                "com.abc.TestClass", "testMethod", "aGroup", stackTraceWriter, 77 );
         }
     }
 
@@ -451,11 +468,12 @@ public class ForkingRunListenerTest
         {
             StackTraceWriter stackTraceWriter =
                 new LegacyPojoStackTraceWriter( "org.apache.tests.TestClass", "testMethod11", e );
-            return new CategorizedReportEntry( "com.abc.TestClass", "testMethod", "aGroup", stackTraceWriter, 77 );
+            return new CategorizedReportEntry( NORMAL_RUN, 1L,
+                "com.abc.TestClass", "testMethod", "aGroup", stackTraceWriter, 77 );
         }
     }
 
-    private RunListener createForkingRunListener()
+    private TestReportListener<TestOutputReportEntry> createForkingRunListener()
     {
         WritableBufferedByteChannel channel = (WritableBufferedByteChannel) newChannel( printStream );
         return new ForkingRunListener( new EventChannelEncoder( channel ), false );
@@ -465,7 +483,7 @@ public class ForkingRunListenerTest
     {
         private MockReporter reporter;
 
-        public RunListener run()
+        public TestReportListener<TestOutputReportEntry> run()
             throws ReporterException
         {
             reset();

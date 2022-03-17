@@ -22,6 +22,9 @@ package org.apache.maven.surefire.api.util.internal;
 import java.lang.management.ManagementFactory;
 import java.util.Map;
 
+import static org.apache.maven.surefire.shared.lang3.JavaVersion.JAVA_17;
+import static org.apache.maven.surefire.shared.lang3.JavaVersion.JAVA_RECENT;
+
 /**
  * Similar to Java 7 java.util.Objects.
  *
@@ -43,5 +46,13 @@ public final class ObjectUtils
     public static Map<String, String> systemProps()
     {
         return ManagementFactory.getRuntimeMXBean().getSystemProperties();
+    }
+
+    /**
+     * @return true if SecurityManager is supported (even if deprecated) in JDK (up to 17)
+     */
+    public static boolean isSecurityManagerSupported()
+    {
+        return JAVA_RECENT.atMost( JAVA_17 );
     }
 }

@@ -19,38 +19,46 @@ package org.apache.maven.plugin.surefire.extensions;
  * under the License.
  */
 
+import javax.annotation.Nonnull;
+
+import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.net.URI;
+import java.nio.ByteBuffer;
+import java.nio.channels.ReadableByteChannel;
+import java.nio.channels.WritableByteChannel;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
 import org.apache.maven.plugin.surefire.booterclient.output.ThreadedStreamConsumer;
 import org.apache.maven.plugin.surefire.log.api.ConsoleLogger;
 import org.apache.maven.plugin.surefire.log.api.NullConsoleLogger;
-import org.apache.maven.surefire.api.booter.MasterProcessChannelEncoder;
+import org.apache.maven.surefire.api.booter.Command;
 import org.apache.maven.surefire.api.event.Event;
-import org.apache.maven.surefire.api.report.ConsoleOutputReceiver;
-import org.apache.maven.surefire.booter.spi.SurefireMasterProcessChannelProcessorFactory;
-import org.apache.maven.surefire.extensions.EventHandler;
 import org.apache.maven.surefire.api.fork.ForkNodeArguments;
+import org.apache.maven.surefire.api.report.OutputReportEntry;
+import org.apache.maven.surefire.api.report.TestOutputReceiver;
+import org.apache.maven.surefire.api.report.TestOutputReportEntry;
+import org.apache.maven.surefire.booter.spi.EventChannelEncoder;
+import org.apache.maven.surefire.booter.spi.SurefireMasterProcessChannelProcessorFactory;
+import org.apache.maven.surefire.extensions.CommandReader;
+import org.apache.maven.surefire.extensions.EventHandler;
 import org.apache.maven.surefire.extensions.util.CountdownCloseable;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
-import javax.annotation.Nonnull;
-import java.io.Closeable;
-import java.io.File;
-import java.net.URI;
-import java.nio.ByteBuffer;
-import java.nio.channels.ReadableByteChannel;
-import java.util.UUID;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.FutureTask;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
-
-import static org.fest.assertions.Assertions.assertThat;
+import static java.util.concurrent.TimeUnit.HOURS;
+import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.apache.maven.surefire.api.report.RunMode.NORMAL_RUN;
+import static org.apache.maven.surefire.api.report.TestOutputReportEntry.stdOutln;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.fail;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /**
  * Simulates the End To End use case where Maven process and Surefire process communicate using the TCP/IP protocol.
@@ -68,68 +76,21 @@ public class E2ETest
     public void endToEndTest() throws Exception
     {
         ForkNodeArguments arguments = new Arguments( UUID.randomUUID().toString(), 1, new NullConsoleLogger() );
+
         final SurefireForkChannel server = new SurefireForkChannel( arguments );
+        server.tryConnectToClient();
 
         final String connection = server.getForkNodeConnectionString();
 
         final SurefireMasterProcessChannelProcessorFactory factory = new SurefireMasterProcessChannelProcessorFactory();
         factory.connect( connection );
-        final MasterProcessChannelEncoder encoder = factory.createEncoder( arguments );
-
-        System.gc();
-
-        TimeUnit.SECONDS.sleep( 3L );
+        final EventChannelEncoder encoder = (EventChannelEncoder) factory.createEncoder( arguments );
 
         final CountDownLatch awaitHandlerFinished = new CountDownLatch( 2 );
 
-        final int totalCalls = 400_000; // 400_000; // 1_000_000; // 10_000_000;
-
-        Thread t = new Thread()
-        {
-            @Override
-            public void run()
-            {
-                ConsoleOutputReceiver target = new ConsoleOutputReceiver()
-                {
-                    @Override
-                    public void writeTestOutput( String output, boolean newLine, boolean stdout )
-                    {
-                        encoder.stdOut( output, true );
-                    }
-                };
-
-                //PrintStream out = System.out;
-                //PrintStream err = System.err;
-
-                //ConsoleOutputCapture.startCapture( target );
-
-                try
-                {
-                    long t1 = System.currentTimeMillis();
-                    for ( int i = 0; i < totalCalls; i++ )
-                    {
-                        //System.out.println( LONG_STRING );
-                        encoder.stdOut( LONG_STRING, true );
-                    }
-                    long t2 = System.currentTimeMillis();
-                    long spent = t2 - t1;
-                    //System.setOut( out );
-                    //System.setErr( err );
-                    System.out.println( spent + "ms on write" );
-                    awaitHandlerFinished.countDown();
-                }
-                catch ( Exception e )
-                {
-                    e.printStackTrace();
-                }
-            }
-        };
-        t.setDaemon( true );
-        t.start();
-
-        server.connectToClient();
-
         final AtomicLong readTime = new AtomicLong();
+
+        final int totalCalls = 400_000; // 400_000; // 1_000_000; // 10_000_000;
 
         EventHandler<Event> h = new EventHandler<Event>()
         {
@@ -149,11 +110,6 @@ public class E2ETest
                     long t2 = System.currentTimeMillis();
                     long spent = t2 - t1;
 
-                    if ( counter.get() % 500_000 == 0 )
-                    {
-                        System.out.println( spent + "ms: " + counter.get() );
-                    }
-
                     if ( counter.get() == totalCalls - 64 * 1024 )
                     {
                         readTime.set( spent );
@@ -168,17 +124,64 @@ public class E2ETest
             }
         };
 
-        ThreadedStreamConsumer queue = new ThreadedStreamConsumer( h );
+        EventHandler<Event> queue = new ThreadedStreamConsumer( h );
 
-        server.bindEventHandler( queue, new CountdownCloseable( new DummyCloseable(), 1 ), new DummyReadableChannel() )
-            .start();
+        System.gc();
 
-        assertThat( awaitHandlerFinished.await( 30L, TimeUnit.SECONDS ) )
+        SECONDS.sleep( 5L );
+
+        server.bindEventHandler( queue, new CountdownCloseable( new DummyCloseable(), 1 ), new DummyReadableChannel() );
+        server.bindCommandReader( new DummyCommandReader(), null );
+
+        Thread t = new Thread()
+        {
+            @Override
+            public void run()
+            {
+                TestOutputReceiver<OutputReportEntry> target = new TestOutputReceiver()
+                {
+                    @Override
+                    public void writeTestOutput( OutputReportEntry reportEntry )
+                    {
+                        encoder.testOutput( stdOutln( reportEntry.getLog() ) );
+                    }
+                };
+
+                //PrintStream out = System.out;
+                //PrintStream err = System.err;
+
+                //ConsoleOutputCapture.startCapture( target );
+
+                try
+                {
+                    long t1 = System.currentTimeMillis();
+                    for ( int i = 0; i < totalCalls; i++ )
+                    {
+                        //System.out.println( LONG_STRING );
+                        encoder.testOutput( new TestOutputReportEntry( stdOutln( LONG_STRING ), NORMAL_RUN, 1L ) );
+                    }
+                    long t2 = System.currentTimeMillis();
+                    long spent = t2 - t1;
+                    //System.setOut( out );
+                    //System.setErr( err );
+                    System.out.println( spent + "ms on write" );
+                    awaitHandlerFinished.countDown();
+                }
+                catch ( Exception e )
+                {
+                    e.printStackTrace();
+                }
+            }
+        };
+        t.setDaemon( true );
+        t.start();
+
+        assertThat( awaitHandlerFinished.await( 30L, SECONDS ) )
             .isTrue();
 
         factory.close();
         server.close();
-        queue.close();
+        //queue.close();
 
         // 1.0 seconds while using the encoder/decoder
         assertThat( readTime.get() )
@@ -191,8 +194,8 @@ public class E2ETest
     @Test( timeout = 10_000L )
     public void shouldVerifyClient() throws Exception
     {
-        ForkNodeArguments forkNodeArguments = mock( ForkNodeArguments.class );
-        when( forkNodeArguments.getSessionId() ).thenReturn( UUID.randomUUID().toString() );
+        ForkNodeArguments forkNodeArguments =
+            new Arguments( UUID.randomUUID().toString(), 1, new NullConsoleLogger() );
 
         try ( SurefireForkChannel server = new SurefireForkChannel( forkNodeArguments );
               SurefireMasterProcessChannelProcessorFactory client = new SurefireMasterProcessChannelProcessorFactory() )
@@ -211,8 +214,6 @@ public class E2ETest
             t.setDaemon( true );
             t.start();
 
-            server.connectToClient();
-
             assertThat( task.get() )
                 .isEqualTo( "client connected" );
         }
@@ -221,9 +222,8 @@ public class E2ETest
     @Test( timeout = 10_000L )
     public void shouldNotVerifyClient() throws Exception
     {
-        ForkNodeArguments forkNodeArguments = mock( ForkNodeArguments.class );
-        String serverSessionId = UUID.randomUUID().toString();
-        when( forkNodeArguments.getSessionId() ).thenReturn( serverSessionId );
+        ForkNodeArguments forkNodeArguments =
+            new Arguments( UUID.randomUUID().toString(), 1, new NullConsoleLogger() );
 
         try ( SurefireForkChannel server = new SurefireForkChannel( forkNodeArguments );
               SurefireMasterProcessChannelProcessorFactory client = new SurefireMasterProcessChannelProcessorFactory() )
@@ -246,31 +246,128 @@ public class E2ETest
 
             e.expect( InvalidSessionIdException.class );
             e.expectMessage( "The actual sessionId '6ba7b812-9dad-11d1-80b4-00c04fd430c8' does not match '"
-                + serverSessionId + "'." );
+                + forkNodeArguments.getSessionId() + "'." );
 
-            server.connectToClient();
+            server.tryConnectToClient();
+            server.bindCommandReader( new DummyCommandReader(), new DummyWritableByteChannel() );
+
+            server.bindEventHandler( new DummyEventHandler(),
+                new CountdownCloseable( new DummyCloseable(), 1 ), new DummyReadableChannel() );
 
             fail( task.get() );
         }
     }
 
-    private static class DummyReadableChannel implements ReadableByteChannel
+    private static class DummyEventHandler<Event> implements EventHandler<Event>
     {
         @Override
-        public int read( ByteBuffer dst )
+        public void handleEvent( @Nonnull Event event )
         {
-            return 0;
+        }
+    }
+
+    private static class DummyReadableChannel implements ReadableByteChannel
+    {
+        private volatile Thread t;
+
+        @Override
+        public int read( ByteBuffer dst ) throws IOException
+        {
+            try
+            {
+                t = Thread.currentThread();
+                HOURS.sleep( 1L );
+                return 0;
+            }
+            catch ( InterruptedException e )
+            {
+                throw new IOException( e.getLocalizedMessage(), e );
+            }
         }
 
         @Override
         public boolean isOpen()
         {
-            return false;
+            return true;
         }
 
         @Override
         public void close()
         {
+            if ( t != null )
+            {
+                t.interrupt();
+            }
+        }
+    }
+
+    private static class DummyWritableByteChannel implements WritableByteChannel
+    {
+        private volatile Thread t;
+
+        @Override
+        public int write( ByteBuffer src ) throws IOException
+        {
+            try
+            {
+                t = Thread.currentThread();
+                HOURS.sleep( 1L );
+                return 0;
+            }
+            catch ( InterruptedException e )
+            {
+                throw new IOException( e.getLocalizedMessage(), e );
+            }
+        }
+
+        @Override
+        public boolean isOpen()
+        {
+            return true;
+        }
+
+        @Override
+        public void close() throws IOException
+        {
+            if ( t != null )
+            {
+                t.interrupt();
+            }
+        }
+    }
+
+    private static class DummyCommandReader implements CommandReader
+    {
+        private volatile Thread t;
+
+        @Override
+        public Command readNextCommand() throws IOException
+        {
+            try
+            {
+                t = Thread.currentThread();
+                HOURS.sleep( 1L );
+                return null;
+            }
+            catch ( InterruptedException e )
+            {
+                throw new IOException( e.getLocalizedMessage(), e );
+            }
+        }
+
+        @Override
+        public void close()
+        {
+            if ( t != null )
+            {
+                t.interrupt();
+            }
+        }
+
+        @Override
+        public boolean isClosed()
+        {
+            return false;
         }
     }
 
@@ -330,6 +427,13 @@ public class E2ETest
         @Nonnull
         @Override
         public ConsoleLogger getConsoleLogger()
+        {
+            return logger;
+        }
+
+        @Nonnull
+        @Override
+        public Object getConsoleLock()
         {
             return logger;
         }

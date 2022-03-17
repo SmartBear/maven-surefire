@@ -47,7 +47,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -118,6 +118,13 @@ public class ForkChannelTest
             {
                 return reporter;
             }
+
+            @Nonnull
+            @Override
+            public Object getConsoleLock()
+            {
+                return reporter;
+            }
         };
 
         ForkNodeFactory factory = new SurefireForkNodeFactory();
@@ -157,11 +164,11 @@ public class ForkChannelTest
             Client client = new Client( uri.getPort(), sessionId );
             client.start();
 
-            channel.connectToClient();
-            channel.bindCommandReader( commandReader, null ).start();
+            channel.tryConnectToClient();
+            channel.bindCommandReader( commandReader, null );
             ReadableByteChannel stdOut = mock( ReadableByteChannel.class );
             when( stdOut.read( any( ByteBuffer.class ) ) ).thenReturn( -1 );
-            channel.bindEventHandler( consumer, cc, stdOut ).start();
+            channel.bindEventHandler( consumer, cc, stdOut );
 
             commandReader.noop();
 

@@ -38,7 +38,7 @@ import static org.apache.maven.surefire.shared.lang3.SystemUtils.IS_OS_FREE_BSD;
 import static org.apache.maven.surefire.shared.lang3.SystemUtils.IS_OS_LINUX;
 import static org.apache.maven.surefire.shared.lang3.SystemUtils.IS_OS_NET_BSD;
 import static org.apache.maven.surefire.shared.lang3.SystemUtils.IS_OS_OPEN_BSD;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assume.assumeTrue;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
@@ -46,7 +46,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
 import static org.powermock.api.mockito.PowerMockito.mockStatic;
 import static org.powermock.api.mockito.PowerMockito.verifyStatic;
-import static org.powermock.reflect.Whitebox.invokeMethod;
 
 /**
  * Test of {@link SystemUtils}.
@@ -63,17 +62,6 @@ public class SystemUtilsTest
      */
     public static class PlainUnitTests
     {
-
-        @Test
-        public void shouldMatchJavaSpecVersion() throws Exception
-        {
-            BigDecimal actual = invokeMethod( SystemUtils.class, "getJavaSpecificationVersion" );
-            BigDecimal expected =
-                    new BigDecimal( System.getProperty( "java.specification.version" ) ).stripTrailingZeros();
-            assertThat( actual ).isEqualTo( expected );
-            assertThat( SystemUtils.JAVA_SPECIFICATION_VERSION ).isEqualTo( expected );
-        }
-
         @Test
         public void shouldParseProprietaryReleaseFile() throws IOException
         {

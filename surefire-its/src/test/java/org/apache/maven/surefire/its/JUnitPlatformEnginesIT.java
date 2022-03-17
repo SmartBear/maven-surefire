@@ -19,24 +19,24 @@ package org.apache.maven.surefire.its;
  * under the License.
  */
 
-import com.googlecode.junittoolbox.ParallelParameterized;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.maven.it.VerificationException;
 import org.apache.maven.surefire.its.fixture.OutputValidator;
 import org.apache.maven.surefire.its.fixture.SurefireJUnit4IntegrationTestCase;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameter;
 import org.junit.runners.Parameterized.Parameters;
-
-import java.util.ArrayList;
-import java.util.List;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.apache.maven.surefire.its.fixture.HelperAssertions.assumeJavaVersion;
 import static org.apache.maven.surefire.its.fixture.IsRegex.regex;
-import static org.fest.assertions.Assertions.assertThat;
-import static org.fest.util.Collections.set;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.util.Sets.set;
 import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
@@ -47,7 +47,7 @@ import static org.junit.Assume.assumeThat;
 /**
  *
  */
-@RunWith( ParallelParameterized.class )
+@RunWith( Parameterized.class )
 @SuppressWarnings( "checkstyle:magicnumber" )
 public class JUnitPlatformEnginesIT extends SurefireJUnit4IntegrationTestCase
 {
@@ -410,13 +410,13 @@ public class JUnitPlatformEnginesIT extends SurefireJUnit4IntegrationTestCase
         validator.getSurefireReportsFile( "TEST-junitplatformenginejupiter.BasicJupiterTest.xml", UTF_8 )
                 .assertContainsText( "<testcase name=\"test(TestInfo)\" "
                         + "classname=\"junitplatformenginejupiter.BasicJupiterTest\"" )
-                .assertContainsText( "<testcase name=\"0 + 1 = 1\" "
+                .assertContainsText( "<testcase name=\"add(int, int, int) 0 + 1 = 1\" "
                         + "classname=\"junitplatformenginejupiter.BasicJupiterTest\"" )
-                .assertContainsText( "<testcase name=\"1 + 2 = 3\" "
+                .assertContainsText( "<testcase name=\"add(int, int, int) 1 + 2 = 3\" "
                         + "classname=\"junitplatformenginejupiter.BasicJupiterTest\"" )
-                .assertContainsText( "<testcase name=\"49 + 51 = 100\" "
+                .assertContainsText( "<testcase name=\"add(int, int, int) 49 + 51 = 100\" "
                         + "classname=\"junitplatformenginejupiter.BasicJupiterTest\"" )
-                .assertContainsText( "<testcase name=\"1 + 100 = 101\" "
+                .assertContainsText( "<testcase name=\"add(int, int, int) 1 + 100 = 101\" "
                         + "classname=\"junitplatformenginejupiter.BasicJupiterTest\"" );
     }
 

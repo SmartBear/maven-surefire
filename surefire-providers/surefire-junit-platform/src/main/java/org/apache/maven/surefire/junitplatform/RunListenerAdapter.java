@@ -31,9 +31,16 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
+import org.apache.maven.surefire.api.report.OutputReportEntry;
+import org.apache.maven.surefire.api.report.RunMode;
+import org.apache.maven.surefire.api.report.TestOutputReceiver;
+import org.apache.maven.surefire.api.report.TestOutputReportEntry;
+import org.apache.maven.surefire.report.ClassMethodIndexer;
+import org.apache.maven.surefire.api.report.TestReportListener;
 import org.apache.maven.surefire.report.PojoStackTraceWriter;
-import org.apache.maven.surefire.api.report.RunListener;
+import org.apache.maven.surefire.report.RunModeSetter;
 import org.apache.maven.surefire.api.report.SafeThrowable;
 import org.apache.maven.surefire.api.report.SimpleReportEntry;
 import org.apache.maven.surefire.api.report.StackTraceWriter;
@@ -49,18 +56,27 @@ import org.junit.platform.launcher.TestPlan;
  * @since 2.22.0
  */
 final class RunListenerAdapter
-    implements TestExecutionListener
+    implements TestExecutionListener, TestOutputReceiver<OutputReportEntry>, RunModeSetter
 {
     private static final Pattern COMMA_PATTERN = Pattern.compile( "," );
 
+    private final ClassMethodIndexer classMethodIndexer = new ClassMethodIndexer();
     private final ConcurrentMap<TestIdentifier, Long> testStartTime = new ConcurrentHashMap<>();
     private final ConcurrentMap<TestIdentifier, TestExecutionResult> failures = new ConcurrentHashMap<>();
-    private final RunListener runListener;
+    private final ConcurrentMap<String, TestIdentifier> runningTestIdentifiersByUniqueId = new ConcurrentHashMap<>();
+    private final TestReportListener<TestOutputReportEntry> runListener;
     private volatile TestPlan testPlan;
+    private volatile RunMode runMode;
 
-    RunListenerAdapter( RunListener runListener )
+    RunListenerAdapter( TestReportListener<TestOutputReportEntry> runListener )
     {
         this.runListener = runListener;
+    }
+
+    @Override
+    public void setRunMode( RunMode runMode )
+    {
+        this.runMode = runMode;
     }
 
     @Override
@@ -79,6 +95,8 @@ final class RunListenerAdapter
     @Override
     public void executionStarted( TestIdentifier testIdentifier )
     {
+        runningTestIdentifiersByUniqueId.put( testIdentifier.getUniqueId(), testIdentifier );
+
         if ( testIdentifier.isContainer()
                         && testIdentifier.getSource().filter( ClassSource.class::isInstance ).isPresent() )
         {
@@ -155,6 +173,8 @@ final class RunListenerAdapter
                     }
             }
         }
+
+        runningTestIdentifiersByUniqueId.remove( testIdentifier.getUniqueId() );
     }
 
     private Integer computeElapsedTime( TestIdentifier testIdentifier )
@@ -162,6 +182,16 @@ final class RunListenerAdapter
         Long startTime = testStartTime.remove( testIdentifier );
         long endTime = System.currentTimeMillis();
         return startTime == null ? null : (int) ( endTime - startTime );
+    }
+
+    private Stream<TestIdentifier> collectAllTestIdentifiersInHierarchy( TestIdentifier testIdentifier )
+    {
+        return testIdentifier.getParentId()
+            .map( runningTestIdentifiersByUniqueId::get )
+            .map( parentTestIdentifier ->
+                Stream.concat( Stream.of( parentTestIdentifier ),
+                               collectAllTestIdentifiersInHierarchy( parentTestIdentifier ) ) )
+            .orElseGet( Stream::empty );
     }
 
     private String safeGetMessage( Throwable throwable )
@@ -206,8 +236,8 @@ final class RunListenerAdapter
         }
         StackTraceWriter stw =
                 testExecutionResult == null ? null : toStackTraceWriter( className, methodName, testExecutionResult );
-        return new SimpleReportEntry( className, classText, methodName, methodText,
-                stw, elapsedTime, reason, systemProperties );
+        return new SimpleReportEntry( runMode, classMethodIndexer.indexClassMethod( className, methodName ), className,
+            classText, methodName, methodText, stw, elapsedTime, reason, systemProperties );
     }
 
     private SimpleReportEntry createReportEntry( TestIdentifier testIdentifier )
@@ -275,6 +305,15 @@ final class RunListenerAdapter
                     .map( s -> new String[] { s[0], s[1] } )
                     .orElse( new String[] { realClassName, realClassName } );
 
+            String parentDisplay =
+                collectAllTestIdentifiersInHierarchy( testIdentifier )
+                    .filter( identifier -> identifier.getSource().filter( MethodSource.class::isInstance ).isPresent() )
+                    .map( TestIdentifier::getDisplayName )
+                    .collect( joining( " " ) );
+
+            boolean needsSpaceSeparator = isNotBlank( parentDisplay ) && !display.startsWith( "[" );
+            String methodDisplay = parentDisplay + ( needsSpaceSeparator ? " " : "" ) + display;
+
             String simpleClassNames = COMMA_PATTERN.splitAsStream( methodSource.getMethodParameterTypes() )
                     .map( s -> s.substring( 1 + s.lastIndexOf( '.' ) ) )
                     .collect( joining( "," ) );
@@ -283,11 +322,11 @@ final class RunListenerAdapter
             String methodName = methodSource.getMethodName();
             String description = testIdentifier.getLegacyReportingName();
             String methodSign = hasParams ? methodName + '(' + simpleClassNames + ')' : methodName;
-            boolean equalDescriptions = display.equals( description );
+            boolean equalDescriptions = methodDisplay.equals( description );
             boolean hasLegacyDescription = description.startsWith( methodName + '(' );
             boolean hasDisplayName = !equalDescriptions || !hasLegacyDescription;
             String methodDesc = equalDescriptions || !hasParams ? methodSign : description;
-            String methodDisp = hasDisplayName ? display : methodDesc;
+            String methodDisp = hasDisplayName ? methodDisplay : methodDesc;
 
             // The behavior of methods getLegacyReportingName() and getDisplayName().
             //     test      ||  legacy  |  display
@@ -331,5 +370,12 @@ final class RunListenerAdapter
     {
         getFailures().clear();
         testPlan = null;
+    }
+
+    @Override
+    public void writeTestOutput( OutputReportEntry reportEntry )
+    {
+        Long testRunId = classMethodIndexer.getLocalIndex();
+        runListener.writeTestOutput( new TestOutputReportEntry( reportEntry, runMode, testRunId ) );
     }
 }

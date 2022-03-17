@@ -56,6 +56,8 @@ import static java.io.File.pathSeparator;
 public class NewClassLoaderRunner
     extends BlockJUnit4ClassRunner
 {
+    private static final String PROJECT_DIR = System.getProperty( "java.dir" );
+
     private Class<?> cls;
 
     public NewClassLoaderRunner( Class<?> clazz )
@@ -216,6 +218,7 @@ public class NewClassLoaderRunner
             }
             catch ( IOException e )
             {
+                e.printStackTrace();
                 return new URL[0];
             }
         }
@@ -225,7 +228,7 @@ public class NewClassLoaderRunner
             Collection<URL> classPath = new HashSet<>();
             for ( String file : path.split( pathSeparator ) )
             {
-                classPath.add( new File( file ).toURL() );
+                classPath.add( new File( file ).toURI().toURL() );
             }
             return classPath;
         }
@@ -235,19 +238,18 @@ public class NewClassLoaderRunner
             Collection<URL> classPath = new HashSet<>();
             try
             {
-                String[] files = FileUtils.fileRead( new File( "target/test-classpath/cp.txt" ), "UTF-8" )
-                        .split( pathSeparator );
+                File classPathFile = new File( PROJECT_DIR, "target/test-classpath/cp.txt" );
+                String[] files = FileUtils.fileRead( classPathFile, "UTF-8" ).split( pathSeparator );
                 for ( String file : files )
                 {
-                    File f = new File( file );
-                    File dir = f.getParentFile();
-                    classPath.add( ( dir.getName().equals( "target" ) ? new File( dir, "classes" ) : f ).toURL() );
+                    classPath.add( new File( file ).toURI().toURL() );
                 }
-                classPath.add( new File( "target/classes" ).toURL() );
-                classPath.add( new File( "target/test-classes" ).toURL() );
+                classPath.add( new File( PROJECT_DIR, "target/classes" ).toURI().toURL() );
+                classPath.add( new File( PROJECT_DIR, "target/test-classes" ).toURI().toURL() );
             }
             catch ( IOException e )
             {
+                e.printStackTrace();
                 // turn to java.class.path
                 classPath.clear();
             }

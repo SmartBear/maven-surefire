@@ -38,7 +38,7 @@ import java.util.Iterator;
 import static java.util.Arrays.asList;
 import static org.apache.maven.surefire.api.booter.Command.TEST_SET_FINISHED;
 import static org.apache.maven.surefire.api.booter.MasterProcessCommand.RUN_CLASS;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -108,8 +108,6 @@ public class StreamFeederTest
             .append( ":maven-surefire-command:" )
             .append( (char) 13 )
             .append( ":run-testclass:" )
-            .append( (char) 10 )
-            .append( ":normal-run:" )
             .append( (char) 5 )
             .append( ":UTF-8:" )
             .append( (char) 0 )

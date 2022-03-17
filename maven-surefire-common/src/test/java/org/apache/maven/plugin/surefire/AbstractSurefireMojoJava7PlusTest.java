@@ -31,6 +31,8 @@ import org.apache.maven.surefire.booter.StartupConfiguration;
 import org.apache.maven.surefire.extensions.ForkNodeFactory;
 import org.apache.maven.surefire.api.suite.RunResult;
 import org.apache.maven.surefire.api.util.DefaultScanResult;
+import org.apache.maven.surefire.providerapi.ProviderInfo;
+import org.apache.maven.surefire.providerapi.ProviderRequirements;
 import org.codehaus.plexus.languages.java.jpms.JavaModuleDescriptor;
 import org.codehaus.plexus.languages.java.jpms.LocationManager;
 import org.codehaus.plexus.languages.java.jpms.ResolvePathResult;
@@ -57,8 +59,9 @@ import static java.util.Arrays.asList;
 import static java.util.Collections.singleton;
 import static java.util.Collections.singletonMap;
 import static org.apache.maven.artifact.versioning.VersionRange.createFromVersion;
-import static org.fest.assertions.Assertions.assertThat;
-import static org.fest.assertions.Index.atIndex;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.data.Index.atIndex;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -149,6 +152,7 @@ public class AbstractSurefireMojoJava7PlusTest
         mockStatic( ResolvePathsRequest.class );
         when( ResolvePathsRequest.ofStrings( eq( testClasspath.toClasspath().getClassPath() ) ) ).thenReturn( req );
         when( req.setJdkHome( anyString() ) ).thenReturn( req );
+        when( req.setIncludeAllProviders( anyBoolean() ) ).thenReturn( req );
         when( req.setModuleDescriptor( eq( descriptor ) ) ).thenReturn( req );
 
         when( descriptor.name() ).thenReturn( "abc" );
@@ -527,7 +531,7 @@ public class AbstractSurefireMojoJava7PlusTest
 
         ProviderInfo newJUnitPlatformProviderInfo()
         {
-            return new JUnitPlatformProviderInfo( null, null );
+            return new JUnitPlatformProviderInfo( null, null, null );
         }
 
         @Override
@@ -652,6 +656,18 @@ public class AbstractSurefireMojoJava7PlusTest
 
         @Override
         public void setIncludes( List<String> includes )
+        {
+
+        }
+
+        @Override
+        public List<String> getExcludes()
+        {
+            return null;
+        }
+
+        @Override
+        public void setExcludes( List<String> excludes )
         {
 
         }
@@ -789,9 +805,9 @@ public class AbstractSurefireMojoJava7PlusTest
         }
 
         @Override
-        public Boolean getFailIfNoSpecifiedTests()
+        public boolean getFailIfNoSpecifiedTests()
         {
-            return null;
+            return false;
         }
 
         @Override

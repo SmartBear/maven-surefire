@@ -25,7 +25,8 @@ import org.apache.maven.surefire.extensions.util.CommandlineExecutor;
 import java.io.IOException;
 
 /**
- * After the authentication has failed, {@link ForkChannel#connectToClient()} throws {@link InvalidSessionIdException}
+ * After the authentication has failed, {@link ForkChannel#tryConnectToClient()}
+ * throws {@link InvalidSessionIdException}
  * and {@link org.apache.maven.plugin.surefire.booterclient.ForkStarter} should close {@link CommandlineExecutor}.
  *
  * @since 3.0.0-M5

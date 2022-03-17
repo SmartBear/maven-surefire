@@ -25,7 +25,7 @@ import org.apache.maven.surefire.api.provider.ProviderParameters;
 import org.apache.maven.surefire.api.provider.SurefireProvider;
 import org.apache.maven.surefire.api.report.ReporterConfiguration;
 import org.apache.maven.surefire.api.report.ReporterFactory;
-import org.apache.maven.surefire.api.report.RunListener;
+import org.apache.maven.surefire.api.report.TestReportListener;
 import org.apache.maven.surefire.api.suite.RunResult;
 import org.apache.maven.surefire.api.testset.DirectoryScannerParameters;
 import org.apache.maven.surefire.api.testset.RunOrderParameters;
@@ -55,7 +55,7 @@ public class SurefireReflectorTest
         ReporterFactory factory = new ReporterFactory()
         {
             @Override
-            public RunListener createReporter()
+            public TestReportListener createTestReportListener()
             {
                 return null;
             }
@@ -81,7 +81,7 @@ public class SurefireReflectorTest
 
         DirectoryScannerParameters directoryScannerParameters =
                 new DirectoryScannerParameters( new File( "ABC" ), new ArrayList<String>(), new ArrayList<String>(),
-                        new ArrayList<String>(), false, "hourly" );
+                        new ArrayList<String>(), "hourly" );
         surefireReflector.setDirectoryScannerParameters( foo, directoryScannerParameters );
         assertTrue( isCalled( foo ) );
         assertNotNull( ( (Foo) foo ).getDirectoryScannerParameters() );
@@ -104,7 +104,7 @@ public class SurefireReflectorTest
 
         DirectoryScannerParameters directoryScannerParameters =
             new DirectoryScannerParameters( new File( "ABC" ), new ArrayList<String>(), new ArrayList<String>(),
-                new ArrayList<String>(), false, "hourly" );
+                new ArrayList<String>(), "hourly" );
         surefireReflector.setIfDirScannerAware( foo, directoryScannerParameters );
         assertTrue( isCalled( foo ) );
     }
@@ -255,7 +255,7 @@ public class SurefireReflectorTest
         ReporterFactory reporterFactory = new ReporterFactory()
         {
             @Override
-            public RunListener createReporter()
+            public TestReportListener createTestReportListener()
             {
                 return null;
             }
@@ -279,7 +279,7 @@ public class SurefireReflectorTest
         ReporterFactory reporterFactory = new ReporterFactory()
         {
             @Override
-            public RunListener createReporter()
+            public TestReportListener createTestReportListener()
             {
                 return null;
             }

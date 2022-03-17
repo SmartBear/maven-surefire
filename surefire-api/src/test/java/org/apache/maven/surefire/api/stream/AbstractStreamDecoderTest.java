@@ -19,19 +19,8 @@ package org.apache.maven.surefire.api.stream;
  * under the License.
  */
 
-import org.apache.maven.plugin.surefire.log.api.ConsoleLogger;
-import org.apache.maven.surefire.api.booter.Constants;
-import org.apache.maven.surefire.api.booter.ForkedProcessEventType;
-import org.apache.maven.surefire.api.event.Event;
-import org.apache.maven.surefire.api.fork.ForkNodeArguments;
-import org.apache.maven.surefire.api.report.RunMode;
-import org.apache.maven.surefire.api.stream.AbstractStreamDecoder.MalformedFrameException;
-import org.apache.maven.surefire.api.stream.AbstractStreamDecoder.Memento;
-import org.apache.maven.surefire.api.stream.AbstractStreamDecoder.Segment;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
 import javax.annotation.Nonnull;
+
 import java.io.EOFException;
 import java.io.File;
 import java.math.BigInteger;
@@ -45,6 +34,17 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.maven.plugin.surefire.log.api.ConsoleLogger;
+import org.apache.maven.surefire.api.booter.Constants;
+import org.apache.maven.surefire.api.booter.ForkedProcessEventType;
+import org.apache.maven.surefire.api.event.Event;
+import org.apache.maven.surefire.api.fork.ForkNodeArguments;
+import org.apache.maven.surefire.api.stream.AbstractStreamDecoder.MalformedFrameException;
+import org.apache.maven.surefire.api.stream.AbstractStreamDecoder.Memento;
+import org.apache.maven.surefire.api.stream.AbstractStreamDecoder.Segment;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
 import static java.lang.Math.min;
 import static java.lang.System.arraycopy;
 import static java.nio.charset.CodingErrorAction.REPLACE;
@@ -55,7 +55,7 @@ import static java.util.Collections.singletonMap;
 import static org.apache.maven.surefire.api.booter.Constants.DEFAULT_STREAM_ENCODING;
 import static org.apache.maven.surefire.api.booter.ForkedProcessEventType.BOOTERCODE_STDOUT;
 import static org.apache.maven.surefire.api.stream.SegmentType.END_OF_FRAME;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.powermock.reflect.Whitebox.invokeMethod;
 
 /**
@@ -150,7 +150,7 @@ public class AbstractStreamDecoderTest
         ByteBuffer input = ByteBuffer.allocate( 1024 );
         ( (Buffer) input.put( PATTERN2_BYTES ) ).flip();
         int bytesToDecode = PATTERN2_BYTES.length;
-        CharBuffer output = CharBuffer.allocate( 1024 );
+        Buffer output = CharBuffer.allocate( 1024 );
         int readBytes = invokeMethod( AbstractStreamDecoder.class, "decodeString", decoder, input, output,
             bytesToDecode, true, 0 );
 
@@ -171,7 +171,7 @@ public class AbstractStreamDecoderTest
             .put( 91, (byte) 'B' )
             .put( 92, (byte) 'C' ) )
             .position( 90 );
-        CharBuffer output = CharBuffer.allocate( 1024 );
+        Buffer output = CharBuffer.allocate( 1024 );
         int readBytes =
             invokeMethod( AbstractStreamDecoder.class, "decodeString", decoder, input, output, 2, true, 0 );
 
@@ -275,7 +275,7 @@ public class AbstractStreamDecoderTest
         Memento memento = thread.new Memento();
         // whatever position will be compacted to 0
         ( (Buffer) ( (Buffer) memento.getByteBuffer() ).limit( 974 ) ).position( 974 );
-        assertThat( invokeMethod( thread, "readString", memento, PATTERN1.length() + 3 ) )
+        assertThat( (String) invokeMethod( thread, "readString", memento, PATTERN1.length() + 3 ) )
             .isEqualTo( PATTERN1 + "012" );
     }
 
@@ -295,7 +295,7 @@ public class AbstractStreamDecoderTest
             Collections.<Segment, ForkedProcessEventType>emptyMap() );
 
         Memento memento = thread.new Memento();
-        assertThat( invokeMethod( thread, "readString", memento, PATTERN1.length() ) )
+        assertThat( (String) invokeMethod( thread, "readString", memento, PATTERN1.length() ) )
             .isEqualTo( "789" + PATTERN1.substring( 0, 97 ) );
     }
 
@@ -317,7 +317,7 @@ public class AbstractStreamDecoderTest
 
         Memento memento = thread.new Memento();
         // whatever position will be compacted to 0
-        ( (Buffer) ( (Buffer) memento.getByteBuffer().limit( 974 ) ) ).position( 974 );
+        ( (Buffer) memento.getByteBuffer() ).limit( 974 ).position( 974 );
 
         StringBuilder expected = new StringBuilder( "789" );
         for ( int i = 0; i < 11; i++ )
@@ -325,7 +325,7 @@ public class AbstractStreamDecoderTest
             expected.append( PATTERN1 );
         }
         expected.setLength( 1100 );
-        assertThat( invokeMethod( thread, "readString", memento, 1100 ) )
+        assertThat( (String) invokeMethod( thread, "readString", memento, 1100 ) )
             .isEqualTo( expected.toString() );
     }
 
@@ -370,9 +370,9 @@ public class AbstractStreamDecoderTest
         {
             decoder.reset()
                 .decode( buffer, chars, true ); // CharsetDecoder 71 nanos
-            s = chars.flip().toString(); // CharsetDecoder + toString = 91 nanos
+            s = ( (Buffer) chars ).flip().toString(); // CharsetDecoder + toString = 91 nanos
             ( (Buffer) buffer ).clear();
-            chars.clear();
+            ( (Buffer) chars ).clear();
         }
         long l2 = System.currentTimeMillis();
         System.out.println( "decoded 100 bytes within " + ( l2 - l1 ) + " millis (10 million cycles)" );
@@ -635,6 +635,13 @@ public class AbstractStreamDecoderTest
             return null;
         }
 
+        @Nonnull
+        @Override
+        public Object getConsoleLock()
+        {
+            return new Object();
+        }
+
         @Override
         public File getEventStreamBinaryFile()
         {
@@ -678,9 +685,7 @@ public class AbstractStreamDecoderTest
 
         @Nonnull
         @Override
-        protected Event toMessage(
-            @Nonnull ForkedProcessEventType messageType, RunMode runMode,
-            @Nonnull Memento memento ) throws MalformedFrameException
+        protected Event toMessage( @Nonnull ForkedProcessEventType messageType, @Nonnull Memento memento )
         {
             return null;
         }

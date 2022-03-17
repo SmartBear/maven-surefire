@@ -22,13 +22,15 @@ package org.apache.maven.surefire.junit4;
 import org.apache.maven.surefire.api.booter.Command;
 import org.apache.maven.surefire.api.provider.CommandChainReader;
 import org.apache.maven.surefire.api.provider.CommandListener;
+import org.apache.maven.surefire.api.report.TestOutputReportEntry;
+import org.apache.maven.surefire.api.report.TestReportListener;
 import org.apache.maven.surefire.common.junit4.JUnit4RunListener;
 import org.apache.maven.surefire.common.junit4.JUnit4TestChecker;
 import org.apache.maven.surefire.common.junit4.JUnitTestFailureListener;
 import org.apache.maven.surefire.common.junit4.Notifier;
 import org.apache.maven.surefire.api.provider.AbstractProvider;
 import org.apache.maven.surefire.api.provider.ProviderParameters;
-import org.apache.maven.surefire.api.report.ConsoleOutputReceiver;
+import org.apache.maven.surefire.report.ClassMethodIndexer;
 import org.apache.maven.surefire.report.PojoStackTraceWriter;
 import org.apache.maven.surefire.api.report.ReporterFactory;
 import org.apache.maven.surefire.api.report.RunListener;
@@ -40,6 +42,7 @@ import org.apache.maven.surefire.api.testset.TestSetFailedException;
 import org.apache.maven.surefire.api.util.RunOrderCalculator;
 import org.apache.maven.surefire.api.util.ScanResult;
 import org.apache.maven.surefire.api.util.TestsToRun;
+import org.apache.maven.surefire.report.RunModeSetter;
 import org.junit.runner.Description;
 import org.junit.runner.Request;
 import org.junit.runner.Result;
@@ -53,6 +56,8 @@ import java.util.Set;
 
 import static java.lang.reflect.Modifier.isAbstract;
 import static java.lang.reflect.Modifier.isInterface;
+import static org.apache.maven.surefire.api.report.RunMode.NORMAL_RUN;
+import static org.apache.maven.surefire.api.report.RunMode.RERUN_TEST_AFTER_FAILURE;
 import static org.apache.maven.surefire.common.junit4.JUnit4ProviderUtil.createMatchAnyDescriptionFilter;
 import static org.apache.maven.surefire.common.junit4.JUnit4ProviderUtil.generateFailingTestDescriptions;
 import static org.apache.maven.surefire.common.junit4.JUnit4ProviderUtil.isFailureInsideJUnitItself;
@@ -75,6 +80,8 @@ public class JUnit4Provider
     extends AbstractProvider
 {
     private static final String UNDETERMINED_TESTS_DESCRIPTION = "cannot determine test in forked JVM with surefire";
+
+    private final ClassMethodIndexer classMethodIndexer = new ClassMethodIndexer();
 
     private final ClassLoader testClassLoader;
 
@@ -122,9 +129,11 @@ public class JUnit4Provider
         RunResult runResult;
         try
         {
-            RunListener reporter = reporterFactory.createReporter();
+            TestReportListener<TestOutputReportEntry> reporter = reporterFactory.createTestReportListener();
+            JUnit4RunListener listener = new JUnit4RunListener( reporter );
+            listener.setRunMode( NORMAL_RUN );
 
-            startCapture( (ConsoleOutputReceiver) reporter );
+            startCapture( listener );
             // startCapture() called in prior to setTestsToRun()
 
             if ( testsToRun == null )
@@ -132,7 +141,7 @@ public class JUnit4Provider
                 setTestsToRun( forkTestSet );
             }
 
-            Notifier notifier = new Notifier( new JUnit4RunListener( reporter ), getSkipAfterFailureCount() );
+            Notifier notifier = new Notifier( listener, getSkipAfterFailureCount() );
             Result result = new Result();
             notifier.addListeners( createCustomListeners( customRunListeners ) )
                 .addListener( result.createListener() );
@@ -156,7 +165,7 @@ public class JUnit4Provider
 
                 for ( Class<?> testToRun : testsToRun )
                 {
-                    executeTestSet( testToRun, reporter, notifier );
+                    executeTestSet( testToRun, reporter, notifier, listener );
                 }
             }
             finally
@@ -229,13 +238,15 @@ public class JUnit4Provider
         } );
     }
 
-    private void executeTestSet( Class<?> clazz, RunListener reporter, Notifier notifier )
+    private void executeTestSet( Class<?> clazz, RunListener reporter, Notifier notifier, RunModeSetter runMode )
     {
-        final SimpleReportEntry report = new SimpleReportEntry( clazz.getName(), null, null, null, systemProps() );
+        long testRunId = classMethodIndexer.indexClass( clazz.getName() );
+        SimpleReportEntry report =
+            new SimpleReportEntry( NORMAL_RUN, testRunId, clazz.getName(), null, null, null, systemProps() );
         reporter.testSetStarting( report );
         try
         {
-            executeWithRerun( clazz, notifier );
+            executeWithRerun( clazz, notifier, runMode );
         }
         catch ( Throwable e )
         {
@@ -250,7 +261,8 @@ public class JUnit4Provider
                 String reportName = report.getName();
                 String reportSourceName = report.getSourceName();
                 PojoStackTraceWriter stackWriter = new PojoStackTraceWriter( reportSourceName, reportName, e );
-                reporter.testError( withException( reportSourceName, null, reportName, null, stackWriter ) );
+                reporter.testError( withException( NORMAL_RUN, testRunId, reportSourceName, null, reportName, null,
+                    stackWriter ) );
             }
         }
         finally
@@ -259,7 +271,7 @@ public class JUnit4Provider
         }
     }
 
-    private void executeWithRerun( Class<?> clazz, Notifier notifier )
+    private void executeWithRerun( Class<?> clazz, Notifier notifier, RunModeSetter runMode )
     {
         JUnitTestFailureListener failureListener = new JUnitTestFailureListener();
         notifier.addListener( failureListener );
@@ -281,6 +293,7 @@ public class JUnit4Provider
             // Rerun failing tests if rerunFailingTestsCount is larger than 0
             if ( isRerunFailingTests() )
             {
+                runMode.setRunMode( RERUN_TEST_AFTER_FAILURE );
                 Notifier rerunNotifier = pureNotifier();
                 notifier.copyListenersTo( rerunNotifier );
                 for ( int i = 0; i < rerunFailingTestsCount && !failureListener.getAllFailures().isEmpty(); i++ )

@@ -21,13 +21,12 @@ package org.apache.maven.plugin.surefire.extensions.junit5;
 
 import org.apache.maven.plugin.surefire.extensions.SurefireConsoleOutputReporter;
 import org.apache.maven.plugin.surefire.report.ConsoleOutputFileReporter;
-import org.apache.maven.plugin.surefire.report.StatelessXmlReporter;
 import org.apache.maven.surefire.extensions.ConsoleOutputReportEventListener;
 
 import java.io.File;
 
 /**
- * The extension of {@link StatelessXmlReporter logger} for JUnit5.
+ * The extension of {@link ConsoleOutputReportEventListener logger} for JUnit5.
  * Selectively enables report files upon JUnit5 annotation <em>DisplayName</em>.
  *
  * author <a href="mailto:tibordigana@apache.org">Tibor Digana (tibor17)</a>

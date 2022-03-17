@@ -19,17 +19,17 @@ package org.apache.maven.surefire.its;
  * under the License.
  */
 
-import com.googlecode.junittoolbox.ParallelParameterized;
+import java.util.Arrays;
+import java.util.Collection;
+
 import org.apache.maven.surefire.its.fixture.SurefireJUnit4IntegrationTestCase;
 import org.apache.maven.surefire.its.fixture.SurefireLauncher;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-import java.util.Arrays;
-import java.util.Collection;
-
+import static org.apache.maven.surefire.its.fixture.HelperAssertions.assumeJavaMaxVersion;
 import static org.apache.maven.surefire.its.fixture.HelperAssertions.assumeJavaVersion;
-import static org.apache.maven.surefire.its.fixture.HelperAssertions.assumeJavaVersionExcluded;
 import static org.junit.runners.Parameterized.Parameter;
 import static org.junit.runners.Parameterized.Parameters;
 
@@ -39,7 +39,7 @@ import static org.junit.runners.Parameterized.Parameters;
  * @author <a href="mailto:dfabulich@apache.org">Dan Fabulich</a>
  * @author <a href="mailto:krosenvold@apache.org">Kristian Rosenvold</a>
  */
-@RunWith( ParallelParameterized.class )
+@RunWith( Parameterized.class )
 @SuppressWarnings( { "checkstyle:magicnumber", "checkstyle:linelength" } )
 public class CheckTestNgListenerReporterIT
     extends SurefireJUnit4IntegrationTestCase
@@ -100,7 +100,7 @@ public class CheckTestNgListenerReporterIT
         {
             // only 5.13 uses Google Guice, reflection which breaks jdk 16+
             // module java.base does not "opens java.lang" to unnamed module @209c0b14
-            assumeJavaVersionExcluded( 16 );
+            assumeJavaMaxVersion( 15 );
         }
 
         final SurefireLauncher launcher = unpack( "testng-listener-reporter", "_" + version )

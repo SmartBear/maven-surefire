@@ -21,14 +21,12 @@ package jiras.surefire1098;
 
 import org.junit.Test;
 
-import java.util.concurrent.TimeUnit;
-
 public final class ATest {
 
     @Test
     public void someMethod() throws InterruptedException {
         System.out.println(getClass() + " " + Thread.currentThread().getName());
-        TimeUnit.MILLISECONDS.sleep(100);
+        Locker.QUEUE.put( "A" );
     }
 
 }

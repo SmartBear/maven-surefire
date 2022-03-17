@@ -34,15 +34,15 @@ import static org.apache.maven.plugin.surefire.booterclient.JarManifestForkConfi
 import static org.apache.maven.plugin.surefire.booterclient.JarManifestForkConfiguration.toAbsoluteUri;
 import static org.apache.maven.plugin.surefire.booterclient.JarManifestForkConfiguration.toClasspathElementUri;
 import static org.apache.maven.plugin.surefire.booterclient.JarManifestForkConfiguration.escapeUri;
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import static org.fest.util.Files.delete;
-import static org.fest.util.Files.newTemporaryFolder;
+import static org.assertj.core.util.Files.delete;
+import static org.assertj.core.util.Files.newTemporaryFolder;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -182,7 +182,7 @@ public class JarManifestForkConfigurationTest
                     }
                 } );
         when( relativize( same( parent ), same( classPathElement ) ) )
-                .thenThrow( new IllegalArgumentException() );
+                .thenThrow( new IllegalArgumentException( "'other' has different root" ) );
         when( toClasspathElementUri( same( parent ), same( classPathElement ), same( dumpDirectory ), anyBoolean() ) )
                 .thenCallRealMethod();
         when( escapeUri( anyString(), any( Charset.class ) ) )

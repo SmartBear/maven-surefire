@@ -19,10 +19,10 @@ package org.apache.maven.surefire.booter;
  * under the License.
  */
 
+import org.apache.maven.plugin.surefire.log.api.ConsoleLogger;
 import org.apache.maven.surefire.api.booter.MasterProcessChannelDecoder;
 import org.apache.maven.surefire.api.booter.MasterProcessChannelEncoder;
 import org.apache.maven.surefire.api.fork.ForkNodeArguments;
-import org.apache.maven.surefire.api.report.StackTraceWriter;
 import org.apache.maven.surefire.api.util.internal.WritableBufferedByteChannel;
 import org.apache.maven.surefire.booter.spi.AbstractMasterProcessChannelProcessorFactory;
 import org.apache.maven.surefire.booter.spi.CommandChannelDecoder;
@@ -62,10 +62,11 @@ import java.util.concurrent.FutureTask;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.apache.maven.surefire.api.util.internal.Channels.newBufferedChannel;
-import static org.fest.assertions.Assertions.assertThat;
-import static org.fest.assertions.Fail.fail;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -108,13 +109,7 @@ public class ForkedBooterMockTest
     private MasterProcessChannelProcessorFactory channelProcessorFactory;
 
     @Mock
-    private EventChannelEncoder eventChannel;
-
-    @Captor
-    private ArgumentCaptor<StackTraceWriter> capturedStackTraceWriter;
-
-    @Captor
-    private ArgumentCaptor<Boolean> capturedBoolean;
+    private ConsoleLogger logger;
 
     @Captor
     private ArgumentCaptor<String[]> capturedArgs;
@@ -187,7 +182,7 @@ public class ForkedBooterMockTest
                 .when( booter, "setupBooter",
                         any( String.class ), any( String.class ), any( String.class ), any( String.class ) );
 
-        setInternalState( booter, "eventChannel", eventChannel );
+        setInternalState( booter, "logger", logger );
 
         String[] args = new String[]{ "/", "dump", "surefire.properties", "surefire-effective.properties" };
         invokeMethod( ForkedBooter.class, "run", booter, args );
@@ -198,17 +193,8 @@ public class ForkedBooterMockTest
         verifyPrivate( booter, times( 1 ) )
                 .invoke( "execute" );
 
-        verify( eventChannel, times( 1 ) )
-                .consoleErrorLog( capturedStackTraceWriter.capture(), capturedBoolean.capture() );
-        assertThat( capturedStackTraceWriter.getValue() )
-                .isNotNull();
-        assertThat( capturedStackTraceWriter.getValue().smartTrimmedStackTrace() )
-                .isEqualTo( "test subsystem#no method RuntimeException dummy exception" );
-        assertThat( capturedStackTraceWriter.getValue().getThrowable().getTarget() )
-                .isNotNull()
-                .isInstanceOf( RuntimeException.class );
-        assertThat( capturedStackTraceWriter.getValue().getThrowable().getTarget().getMessage() )
-                .isEqualTo( "dummy exception" );
+        verify( logger, times( 1 ) )
+                .error( eq( "dummy exception" ), any( RuntimeException.class ) );
 
         verifyPrivate( booter, times( 1 ) )
                 .invoke( "cancelPingScheduler" );
@@ -289,7 +275,7 @@ public class ForkedBooterMockTest
                 public void run() throws Throwable
                 {
                     factory.connect( "tcp://localhost:123" );
-                    fail();
+                    fail( "should not connect to the port 123" );
                 }
             } );
 
@@ -400,7 +386,7 @@ public class ForkedBooterMockTest
                     public void run() throws Throwable
                     {
                         factory.connect( "pipe://1" );
-                        fail();
+                        fail( "should not connect" );
                     }
                 } );
 
@@ -410,7 +396,7 @@ public class ForkedBooterMockTest
                     public void run() throws Throwable
                     {
                         factory.connect( "tcp://localhost:123\u0000\u0000\u0000" );
-                        fail();
+                        fail( "should not connect to incorrect uri" );
                     }
                 } );
 

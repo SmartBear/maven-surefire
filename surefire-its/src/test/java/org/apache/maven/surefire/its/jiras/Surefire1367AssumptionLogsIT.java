@@ -24,7 +24,7 @@ import org.apache.maven.surefire.its.fixture.SurefireJUnit4IntegrationTestCase;
 import org.apache.maven.surefire.its.fixture.SurefireLauncher;
 import org.junit.Test;
 
-import static org.fest.assertions.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * @author <a href="mailto:tibordigana@apache.org">Tibor Digana (tibor17)</a>
@@ -87,7 +87,7 @@ public class Surefire1367AssumptionLogsIT extends SurefireJUnit4IntegrationTestC
     {
         String xmlReport = outputValidator.getSurefireReportsXmlFile( "TEST-ATest.xml" ).readFileToString();
 
-        String outputCData = "<system-out><![CDATA[Hi" + NL + NL + "There!" + NL + "]]></system-out>" + NL + "    "
+        String outputCData = "<system-out><![CDATA[Hi" + NL + NL + "There!" + NL + "]]></system-out>\n    "
                 + "<system-err><![CDATA[Hello" + NL + NL + "What's up!" + NL + "]]></system-err>";
 
         assertThat( xmlReport ).contains( outputCData );

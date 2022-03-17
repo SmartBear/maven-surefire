@@ -105,7 +105,16 @@ public final class MavenLauncher
     {
         FileUtils.deleteDirectory( dest );
         //noinspection ResultOfMethodCallIgnored
-        getUnpackedAt().renameTo( dest );
+        boolean moved = getUnpackedAt().renameTo( dest );
+        if ( !moved )
+        {
+            String fileEncoding = System.getProperty( "file.encoding" );
+            String os = System.getProperty( "os.name" );
+            String version = System.getProperty( "os.version" );
+            String arch = System.getProperty( "os.arch" );
+            throw new IOException( "Could not move " + getUnpackedAt() + " to " + dest
+                + " (file.encoding=" + fileEncoding + ", " + os + " " + version + " " + arch + ")." );
+        }
         unpackedAt = dest;
     }
 
@@ -395,6 +404,11 @@ public final class MavenLauncher
         getVerifier().setAutoclean( autoclean );
     }
 
+    public void setLogFileName( String logFileName )
+    {
+        getVerifier().setLogFileName( logFileName );
+    }
+
     private Verifier getVerifier()
     {
         if ( verifier == null )
@@ -476,7 +490,6 @@ public final class MavenLauncher
                 basedir, settingsFile, false, defaultCliOptions );
 
         verifier.getVerifierProperties().setProperty( "use.mavenRepoLocal", "true" );
-
         return verifier;
     }
 
