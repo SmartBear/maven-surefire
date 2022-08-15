@@ -495,7 +495,7 @@
         </plugin>
         <plugin>
           <artifactId>maven-javadoc-plugin</artifactId>
-          <version>3.3.1</version>
+          <version>3.4.1</version>
           <configuration>
             <!-- TODO remove when upgrading parent to 35 - MPOM-280 -->
             <detectLinks>false</detectLinks>
